@@ -1,0 +1,24 @@
+{
+  "Users":{
+    "number": 5,
+    "mcs distribution": "uniform"
+  },
+  
+  "WiFiAPs":{ 
+    "number": 2,
+    "backhaul": 5000000.0,
+    "minRate": 1000000
+  },
+  
+  "Multicast Groups": {
+    "number": 3,
+    "RBs": 100,
+    "group mcs": [20, 31, 50, 79, 116, 155, 195, 253, 318, 360, 439, 515, 597, 675, 733]
+  },
+
+  "Video":{
+    "layers": 4,
+    "bitrate": [2000000, 1071529, 2617284, 4726737]
+  }
+}
+
