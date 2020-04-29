@@ -1,6 +1,6 @@
 {
   "Users":{
-    "number": 50,
+    "number": 10,
     "mcs distribution": "uniform"
   },
   
@@ -17,7 +17,7 @@
   },
 
   "Video":{
-    "tiles": 32,
+    "tiles": 3,
     "representations": 4,
     "bitrate": [289, 437, 714, 1220, 2167]
   }

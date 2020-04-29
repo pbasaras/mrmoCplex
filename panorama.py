@@ -7,6 +7,7 @@ Q=3;
 K=0;
 AP=0;
 RBs=0
+AUXILIARY = 10000
 
 V=[]
 Bm=[]
@@ -17,7 +18,15 @@ user_mcs=[]
 group_mcs=[]
 tileWeights = []
 utility=[]
-debug = 0
+debug = 1
+
+
+
+# crossLayer Optimization : globecom_2018
+MaxSE = 0
+userGroups = []
+groupResources = []
+groupTiles = []
 
 def printProblemSolution(problem):
 
@@ -42,11 +51,6 @@ def printProblemSolution(problem):
 def getUserLTESolution(problem, user):
     print("\tLTE Solution")
     groupId = -1
-    for k in range(K):
-        varName = "y." + str(user+1) + "." + str(k+1)
-        if problem.solution.get_values(varName) > 0:
-            print("\t\t", varName, problem.solution.get_values(varName))
-            groupId = k
             
     for k in range(K):
         for t in range(T):
@@ -81,6 +85,14 @@ def getUserWiFiSolution(problem, user):
 
 def printNewSolutionPerUser(problem):
 
+    for k in range(K):
+        for t in range(T):
+            for q in range(Q):
+                varName = "y." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                varValue = problem.solution.get_values(varName)
+                if problem.solution.get_values(varName) > 0:
+                    print(varName,varValue)
+                    
     for i in range(I):
         print("user", i+1)
         getUserLTESolution(problem, i)
@@ -283,7 +295,7 @@ def readConfiguration():
 def generateTileWeights(tiles):
     global tileWeights
     tileWeights = numpy.random.uniform(0.08, 0.99, size=tiles).tolist()
-    #tileWeights = [0.4, 0.3, 0.2, 0.1]
+    tileWeights = numpy.ones(tiles).tolist()
     print("\nTiles viewing probability: ",tileWeights)
 
 
@@ -291,16 +303,18 @@ def generateTileWeights(tiles):
 def generateProblemVariables(problem):
     print("\nGenerating problem variables")
     
-    # y.i.k
-    for i in range(I):
-        for k in range(K):
-            varName = "y." + str(i+1) + "." + str(k+1)
-            problem.variables.add(obj=[0.0],
-                                  lb=[0.0],
-                                  ub=[1.0],
-                                  types=["C"],
-                                  names=[varName])
-                                  
+    # y.k.t.q
+    for k in range(K):
+        for t in range(T):
+            for q in range(Q):
+                varName = "y." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                problem.variables.add(obj=[0.0],
+                                        lb=[0.0],
+                                        ub=[1.0],
+                                        types=["B"],
+                                        names=[varName])
+    
+    
     # z.k
     for k in range(K):
         varName = "z." + str(k+1)
@@ -357,42 +371,6 @@ def generateProblemVariables(problem):
 
 def generateProblemConstraints(problem):
     print("Generating problem constraints")
-    
-    # y.i.k * c.k' <= c.i
-    for i in range(I):
-        for k in range(K):
-            theVars = []
-            theCoefs = []
-            
-            tmpName = "y."+ str(i+1) + "." + str(k+1)
-            theVars.append(tmpName)
-            theCoefs.append(group_mcs[k])
-            
-            if debug == 1:
-                print ("\t\t",theVars, theCoefs, " <= ", user_mcs[i])
-                
-            problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
-                                           senses = ["L"],
-                                           rhs = [user_mcs[i]])
-
-
-    # sum_k(y.i.k) <= 1
-    for i in range(I):
-        theVars = []
-        theCoefs = []
-        
-        for k in range(K):
-            tmpName = "y."+ str(i+1) + "." + str(k+1)
-            theVars.append(tmpName)
-            theCoefs.append(1)
-
-        if debug == 1:
-            print ("\t\t",theVars, theCoefs," <= 1")
-            
-        problem.linear_constraints.add(lin_expr = [cplex.SparsePair(theVars, theCoefs)],
-                                       senses = ["L"],
-                                       rhs = [1.0])
-
 
 
     # sum_k(z.k) <= RBs
@@ -410,26 +388,7 @@ def generateProblemConstraints(problem):
                                    senses=["L"],
                                    rhs=[float(RBs)])
                                    
-      
-    
-    # sum_i(a.i.w*h.i.m) <= Bm
-    for w in range(AP):
-        theVars = []
-        theCoefs = []
-        for i in range(I):
-            tmpName = "a." +str(i+1) + "." + str(w+1)
-            theVars.append(tmpName)
-            theCoefs.append(h_i_m[i][w])
-        
-        if debug == 1:
-            print("\t\t", theVars, theCoefs, "<=",Bm[w])
-            
-        problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
-                                       senses=["L"],
-                                       rhs=[ Bm[w] ])
-
-
-
+                                   
     # sum_i(a.i.w) <= 1
     for w in range(AP):
         theVars = []
@@ -448,30 +407,51 @@ def generateProblemConstraints(problem):
     
     
     
-    # sum_t( sum_q( m.i.k.t.q*b.t.q ) ) - c.k*z.k  <= 0
-    for i in range(I):
-        for k in range(K):
-            theVars = []
-            theCoefs = []
-            for t in range(T):
-                for q in range(Q):
-                    tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
-                    theVars.append(tmpName)
-                    theCoefs.append( V[q] )
-            
-            tmpName  = "z." + str(k+1)
-            theVars.append(tmpName)
-            theCoefs.append(-group_mcs[k])
-            
-            if debug == 1:
-                print("\t\t", theVars, theCoefs, "<= 0")
+    # sum_t( sum_q( y.k.t.q*b.t.q ) ) <= z.k*c.k
+    for k in range(K):
+        theVars = []
+        theCoefs = []
+        for t in range(T):
+            for q in range(Q):
+                tmpName = "y." + str(k+1) + "." + str(t+1) + "." +str(q+1)
+                theVars.append(tmpName)
+                theCoefs.append(V[q])
                 
-            problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
-                                            senses=["L"],
-                                            rhs=[0.0])
-                
+        tmpName  = "z." + str(k+1)
+        theVars.append(tmpName)
+        theCoefs.append(-group_mcs[k])
+        
+        if debug == 1:
+            print("\t\t", theVars, theCoefs, "<= 0")
+        
+        problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                        senses=["L"],
+                                        rhs=[0.0])
     
+    
+    # sum_i( m.i.k.t.q ) - y.k.t.q <= 0
+    for k in range(K):
+        for t in range(T):
+             for q in range(Q):
+                theVars = []
+                theCoefs = []
+                for i in range(I):
+                    tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." +str(q+1)
+                    theVars.append(tmpName)
+                    theCoefs.append(1)
+                
+                tmpName = "y." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                theVars.append(tmpName)
+                theCoefs.append(-AUXILIARY)
 
+                if debug == 1:
+                    print("\t\t", theVars, theCoefs, "<= 0")
+                    
+                problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                                senses=["L"],
+                                                rhs=[0.0])
+                    
+    
     
     # sum_i( sum_w( x.t.w.t.q*b.t.q )) -h.i.w*a.i.w <=0
     for i in range(I):
@@ -521,31 +501,28 @@ def generateProblemConstraints(problem):
             problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
                                             senses=["E"],
                                             rhs=[1.0])
-                                            
     
-    # m.i.k.t.q <= y.i.k
+    
+    
+    #sum_q( m.i.k.t.q*c.k ) <= c.i
     for i in range(I):
         for k in range(K):
             for t in range(T):
+                theVars = []
+                theCoefs = []
                 for q in range(Q):
-                    theVars = []
-                    theCoefs = []
-                    
                     tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
                     theVars.append(tmpName)
-                    theCoefs.append(1)
+                    theCoefs.append(group_mcs[k])
                     
-                    tmpName = "y." + str(i+1) + "." + str(k+1)
-                    theVars.append(tmpName)
-                    theCoefs.append(-1)
+                if debug == 1:
+                    print("\t\t", theVars, theCoefs, "<=", user_mcs[i])
                     
-                    if debug == 1:
-                         print("\t\t", theVars, theCoefs, "<= 0")
-                         
-                    problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
-                                                    senses=["L"],
-                                                    rhs=[0.0])
-                                    
+                problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                                senses=["L"],
+                                                rhs=[user_mcs[i]])
+    
+    
 
 def optimalPanoramicVideo():
 
@@ -554,16 +531,340 @@ def optimalPanoramicVideo():
     problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
     #problem.parameters.timelimit.set(1000) # ~16 minutes
     
-    #problem.parameters.mip.tolerances.mipgap.set(0.05)
+    problem.parameters.mip.tolerances.mipgap.set(0.05)
     
     generateProblemVariables(problem)
     generateProblemConstraints(problem)
     
     problem.solve()
-    printProblemSolution(problem)
+   
     #printNewSolutionPerUser(problem)
-    
+    #printProblemSolution(problem)
     #printOutput(problem)
+    
+##############################################################################################################
+##############################################################################################################
+
+def groupSplitHeuristic():
+    global MaxSE, userGroups
+    
+    print("prev MaxSE", MaxSE)
+    
+    lastGroup = len(userGroups)-1 # always to the split to the last group
+    print("User MCS List : ", userGroups[lastGroup])
+    currentMCSList = set(userGroups[lastGroup])
+    uniqueMCSList  = list(currentMCSList)
+    uniqueMCSList.sort()    # always extract the unique mcs values in the last group
+    print("Unique MCS list : ",uniqueMCSList)
+    
+    minMCS = min(uniqueMCSList) # get the minMCS which will me the SE for the left group of the split
+    outputMCS = minMCS
+    print("Min MCS ", minMCS)
+    curUtil =0
+    potentialGroupSplits = len(uniqueMCSList)-1 # the potential splits will be one less than the total uniqeu mcs indexes
+    for i in range(potentialGroupSplits):
+        splitMCS = uniqueMCSList[i+1] # start from the second unique mcs index for the first split, and move to subsequent ones
+        leftUsers = 0
+        rightUsers = 0
+        for mcs in  userGroups[lastGroup]:
+            if mcs < splitMCS:
+                leftUsers +=1
+            else:
+                rightUsers +=1
+           
+        leftUtility  = leftUsers*minMCS
+        rightUtility = rightUsers*splitMCS
+        totalUtility = leftUtility + rightUtility
+        
+        if curUtil < totalUtility:
+            curUtil = totalUtility
+            outputMCS = splitMCS
+            
+        print("split mcs", splitMCS, "l: ", leftUsers,", r: ", rightUsers)
+        print("LEFT Util", leftUtility)
+        print("RIGHT Util", rightUtility)
+        print("TOTAL Util", totalUtility)
+        print("\n")
+    
+    print("Selected split ", outputMCS)
+    
+    tmpList = []
+    numItems = 0
+    for item in userGroups[lastGroup]:
+        if item >= outputMCS:
+            tmpList.append(item)
+            numItems += 1
+    
+    for i in range(numItems):
+        userGroups[lastGroup].pop()
+            
+    #print(userGroups)
+    userGroups.append(tmpList)
+    print(userGroups)
+            
+
+def crossLayergrouping():
+    print("\nCrossLayer grouping")
+    global MaxSE, userGroups
+    
+    if MaxSE == 0:
+        MaxSE = min(user_mcs)*I
+        userGroups.append(sorted(user_mcs))
+        print("\t", userGroups)
+    else:
+        groupSplitHeuristic()
+        
+    
+def calculateGroupResources():
+    print(1)
+
+def crossLayerResourceAllocation(groups):
+    print("CrossLayer Resource Allocation")
+    
+    numGroups = len(groups)
+    print("\tNumber of groups", numGroups)
+    
+    if numGroups == 1:
+        groupResources.append(RBs)
+        print("\tGroup RBs",  groupResources)
+    else:
+        calculateGroupResources()
+
+
+
+class Group:
+    def __init__(self, id, RBs, mcs, users):
+        self.id = id
+        self.RBs = RBs
+        self.residualRB = self.RBs
+        self.mcs = mcs
+        self.maxRate = self.RBs*self.mcs
+        self.users = users
+        self.Ctm = []
+        self.tiles = [] # the tile qualities the group has checked for tranmsission.
+        self.tilesQualityInit()
+
+    def tilesQualityInit(self):
+        for t in range(T):
+            self.tiles.append(numpy.ones(Q).tolist())
+        
+        for t in range(T):
+            for q in range(Q):
+                self.tiles[t][q] = -1*self.tiles[t][q]
+    
+    def printGroupData(self):
+        print("-------- Group Data --------\nId: ", self.id, "\nUsers: ", self.users,"\nRBs: ", self.RBs,"\nResidual RB: ", self.residualRB ,"\nmcs: ", self.mcs, "\nrate: ", self.maxRate,"kbps")
+        print("Cost Matrix: ", self.Ctm)
+        print("Tile Qualities: ", self.tiles)
+
+
+
+def generateTileRepresentationCostMatrixForLowestGroup(groups):
+
+    for t in range(T):
+        tmpCost = []
+        for q in range(Q):
+            if q == 0:
+                tmpCost.append(V[q])
+            else:
+                tmpCost.append(V[q] - V[0])
+                
+        groups[0].Ctm.append(tmpCost)
+            
+    '''
+    else:
+        for t in range(T):
+            tmpCost = []
+            for q in range(Q):
+                prevIdx = idx - 1
+                if q <= groups[prevIdx].tiles[t][q]: # if the previous groups has a same of better quality, then the cost is 0
+                    tmpCost.append(0)
+                elif q == groups[prevIdx].tiles[t][q] + 1: # if the previous groups has a lower tile quality, you allocate a new representaition so you pay all
+                    tmpCost.append(V[q])
+                elif q >= groups[prevIdx].tiles[t][q] + 2: # this step will come only after the previous elif, so you pay the difference from what you allocated in the prev elif
+                    tmpCost.append(V[q] - tmpCost[q-1])
+                    
+            groups[idx].Ctm.append(tmpCost)
+    '''
+
+
+def getSelectedTileQualityOfGroup(groups, idx, t):
+    
+    selectedQuality = 0
+    for q in range(Q):
+        if groups[idx].tiles[t][q] != -1:
+            selectedQuality = q
+
+    return selectedQuality
+
+
+def updateTileRepresentationCostMatrix(groups, idx):
+    print("\n\n\n\nupdating cost matrix for group idx ", idx)
+    
+    for t in range(T):
+        tmpCost = []
+        for q in range(Q):
+            prevGroupIdx = idx -1
+            prevTileQuality = getSelectedTileQualityOfGroup(groups, prevGroupIdx, t)
+            #print("Tile ", t, " Quality ", prevTileQuality)
+            if q <= prevTileQuality:
+                tmpCost.append(0)
+            elif q == prevTileQuality + 1:
+                tmpCost.append(V[q])
+            elif q >= prevTileQuality+ 2:
+                tmpCost.append(V[q] - tmpCost[q-1])
+        
+        groups[idx].Ctm.append(tmpCost)
+     
+
+def updateTileSelectionMatrix(groups, idx):
+    
+    for t in range(T):
+        for q in range(Q):
+            groups[idx].tiles[t][q] = groups[idx-1].tiles[t][q]
+    
+    
+# this function will NOT allocate Tiles as in the iters we will select the nxt tile.
+def initializeRateForLowestRepresentation(groups):
+    
+    totalRate = 0
+    for g in groups:
+        for t in range(T):
+            g.tiles[t][0] = 0
+            if g.id == 1: # allocate the necesary rate of the lower representation only to the first group
+                totalRate += V[0]
+
+    consumedRB = math.ceil(totalRate/groups[0].mcs)
+    print("INITIALIZING FIRST GROUP\n\tNecessary Rate: ", totalRate, "\tmcs: ", groups[0].mcs,"\tAvailable RB ", groups[0].RBs ,"\tRB needed ", consumedRB)
+    
+    groups[0].residualRB -= consumedRB
+    
+    if consumedRB > groups[0].RBs:
+        print("INFISIBLE RESOURCE ALLOCATION")
+        exit()
+        
+    return consumedRB
+    
+
+def allocateBestTile(groups, idx):
+        
+    print("Allocating best tile for group idx", idx)
+    
+    foundBetterTile = False
+    
+    bestTileIdx = 0
+    bestTileRB = 0
+    bestTileValue = 0
+    bestTileQuality = 0
+    for t in range(T):
+        for q in range(Q):
+            if groups[idx].tiles[t][q] == -1 and groups[idx].Ctm[t][q] != 0: # that means that this tile has not been allocated to the group yet
+            
+                curValue = (math.log10(V[q])*tileWeights[t])/groups[idx].Ctm[t][q]
+                neededRB = math.ceil(groups[idx].Ctm[t][q]/groups[idx].mcs)
+                
+                if curValue > bestTileValue and groups[idx].residualRB >= neededRB:
+                    foundBetterTile = True
+                    bestTileValue = curValue
+                    bestTileIdx = t
+                    bestTileQuality = q
+                    bestTileRB = neededRB
+                    
+                    
+    if foundBetterTile:
+        groups[idx].tiles[bestTileIdx][bestTileQuality] = bestTileQuality
+        groups[idx].residualRB -= bestTileRB
+        print("\nBest tile: ", bestTileIdx, " at quality ", bestTileQuality, " with rate ", V[bestTileQuality], "kbps and additional RB ", bestTileRB)
+        groups[idx].printGroupData()
+    else:
+        print("No more tiles to check or no RBs left")
+        bestTileIdx = -1
+        bestTileQuality = -1
+    
+    
+    return [bestTileIdx, bestTileQuality]
+
+    
+def crossLayerRateSelection(groups):
+    print("CrossLayer Rate Selection, Number of groups: ", len(groups))
+        
+    consumedRBs = initializeRateForLowestRepresentation(groups)  # charge cost of lowest quality to lowest group, and allocate the lowest tiles to all groups.
+    #for idx in range(len(groups)):
+    #generateTileRepresentationCostMatrix(groups, idx)  # generate the cost matrix as eq. (18) for all groups
+    
+    for g in groups:
+        gIdx = g.id -1
+        curUtil = 0
+        curRate = 0
+        
+        if gIdx == 0: # if this is the first group we need to substract the rate already given by the initialization
+            curRate += consumedRBs*groups[0].mcs
+            generateTileRepresentationCostMatrixForLowestGroup(groups)
+        else:
+            updateTileRepresentationCostMatrix(groups, gIdx) # update the cost matrix of each group based on the tile allocation of the previous group
+            g.printGroupData()
+            updateTileSelectionMatrix(groups, gIdx)          # update the selected tiles to those of the previous group
+            g.printGroupData()
+            input("Press Enter to continue...\n")
+            
+        
+        while curRate <= g.maxRate:
+            result = allocateBestTile(groups, gIdx)
+            
+            selectedTile = result[0]
+            selectedQuality = result[1]
+            
+            if selectedTile == -1 and selectedQuality == -1: # this means that all possible tiles have been allocated
+                print("Allocated all best tiles for group idx ", gIdx)
+                break;
+            
+            additionalRate = groups[gIdx].Ctm[ selectedTile ][ selectedQuality ]
+            print("Previous Rate: ", curRate,"\t Additional Rate: ", additionalRate, "\tNew Rate: ", curRate+additionalRate)
+            print("Previous Util: ", curUtil, "\tNew Util: ", curUtil+math.log10(additionalRate)*tileWeights[ selectedTile ])
+            curRate += additionalRate
+            curUtil += math.log10(additionalRate)*tileWeights[ selectedTile ]
+            
+            
+            if curRate > g.maxRate:
+                print("ALLOCATED RATE GREATER THAN MAX RATE")
+                exit()
+            
+    exit()
+    
+
+
+
+def crossLayer():
+
+    global groupTiles
+
+    U = 0
+    maxU = -1
+    while maxU < U:
+    
+        maxU = U
+        
+        # -- A
+        #for i in range(2):
+        crossLayergrouping()
+        
+        # -- B
+        U = 0
+        numGroups  = len(userGroups)
+        perGroupRB = int(RBs/numGroups)
+        groups = []
+        for i in range(numGroups):
+            groups.append(Group(i+1, perGroupRB, min(userGroups[i]), userGroups[i])) # create group class objects, i.e., the per group data
+                
+ 
+        crossLayerResourceAllocation(groups)
+        
+        # -- C
+        crossLayerRateSelection(groups)
+        exit()
+    
+   
+    exit()
 
 
 if __name__ == "__main__":
@@ -572,4 +873,8 @@ if __name__ == "__main__":
     
     generateTileWeights(32)
     readConfiguration()
+    
+    crossLayer()
+    
     optimalPanoramicVideo()
+    
