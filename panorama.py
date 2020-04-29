@@ -1,5 +1,6 @@
 import sys, json ,cplex, numpy, math
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 
 I=0
 T=4;
@@ -545,6 +546,10 @@ def optimalPanoramicVideo():
 ##############################################################################################################
 ##############################################################################################################
 
+
+def getTileUtility(t,rate):
+    return math.log10(rate)*tileWeights[t]
+
 def groupSplitHeuristic():
     global MaxSE, userGroups
     
@@ -632,18 +637,30 @@ def crossLayerResourceAllocation(groups):
 
 
 
+def curveFitFunction(x,a,b):
+    return a*numpy.log10(b*x)
+
+
+    
 class Group:
     def __init__(self, id, RBs, mcs, users):
         self.id = id
+        self.Utility = 0
         self.RBs = RBs
         self.residualRB = self.RBs
         self.mcs = mcs
         self.maxRate = self.RBs*self.mcs
         self.users = users
+        self.pairs = []
+        self.Ag = 0.0
+        self.Bg = 0.0
         self.Ctm = []
+        self.effUtil = []
         self.tiles = [] # the tile qualities the group has checked for tranmsission.
         self.tilesQualityInit()
+        self.effectiveUtilityInit()
 
+    # init all tiles and all qualities to -1
     def tilesQualityInit(self):
         for t in range(T):
             self.tiles.append(numpy.ones(Q).tolist())
@@ -652,12 +669,59 @@ class Group:
             for q in range(Q):
                 self.tiles[t][q] = -1*self.tiles[t][q]
     
+    
+    # set the effective utility as eq. (19)
+    def effectiveUtilityInit(self):
+        for t in range(T):
+            tmp = []
+            for q in range(Q):
+                if q == 0:
+                    effectiveUtil = getTileUtility(t, V[q])
+                    tmp.append( effectiveUtil )
+                else:
+                    effectiveUtil = getTileUtility(t, V[q]) - getTileUtility(t, V[q-1])
+                    tmp.append( effectiveUtil )
+            self.effUtil.append(tmp)
+    
+    def curvefiting(self):
+        print("curve fitting")
+        x_data = []
+        y_data = []
+        
+        for d in range(len(self.pairs)):
+            x_data.append(self.pairs[d][0])
+            y_data.append(self.pairs[d][1])
+        
+        x_data = numpy.array(x_data)
+        y_data = numpy.array(y_data)
+        
+        print(x_data)
+        print(y_data)
+        print(self.pairs)
+        popt, pcov = curve_fit(curveFitFunction, x_data, y_data, maxfev=100000)
+        
+        
+        self.Ag = popt[0]
+        self.Bg = popt[1]
+        print(popt)
+        
+        #f= popt[0]*numpy.log10(x_data*popt[1])
+        
+        #fit = numpy.polyfit(x_data, y_data, 1)
+        #f = fit[0]*x_data-fit[1]
+        
+        #plt.plot(x_data, y_data, "o")
+        #plt.plot(x_data,f)
+        #plt.show()
+        
+        #exit()
+    
     def printGroupData(self):
-        print("-------- Group Data --------\nId: ", self.id, "\nUsers: ", self.users,"\nRBs: ", self.RBs,"\nResidual RB: ", self.residualRB ,"\nmcs: ", self.mcs, "\nrate: ", self.maxRate,"kbps")
+        print("-------- Group Data --------\nId: ", self.id,"\nGroup Utility: ", self.Utility,"\neffUtil: ", self.effUtil, "\nUsers: ", self.users,"\nRBs: ", self.RBs,"\nResidual RB: ", self.residualRB ,"\nmcs: ", self.mcs, "\nrate: ", self.maxRate,"kbps\npais: ", self.pairs)
         print("Cost Matrix: ", self.Ctm)
         print("Tile Qualities: ", self.tiles)
 
-
+        
 
 def generateTileRepresentationCostMatrixForLowestGroup(groups):
 
@@ -667,7 +731,7 @@ def generateTileRepresentationCostMatrixForLowestGroup(groups):
             if q == 0:
                 tmpCost.append(V[q])
             else:
-                tmpCost.append(V[q] - V[0])
+                tmpCost.append(V[q] - V[q-1])
                 
         groups[0].Ctm.append(tmpCost)
             
@@ -733,11 +797,14 @@ def initializeRateForLowestRepresentation(groups):
             g.tiles[t][0] = 0
             if g.id == 1: # allocate the necesary rate of the lower representation only to the first group
                 totalRate += V[0]
+                g.Utility += getTileUtility(t,V[0])
 
     consumedRB = math.ceil(totalRate/groups[0].mcs)
     print("INITIALIZING FIRST GROUP\n\tNecessary Rate: ", totalRate, "\tmcs: ", groups[0].mcs,"\tAvailable RB ", groups[0].RBs ,"\tRB needed ", consumedRB)
     
     groups[0].residualRB -= consumedRB
+    groups[0].pairs.append([consumedRB, groups[0].Utility])
+    groups[0].printGroupData()
     
     if consumedRB > groups[0].RBs:
         print("INFISIBLE RESOURCE ALLOCATION")
@@ -748,19 +815,22 @@ def initializeRateForLowestRepresentation(groups):
 
 def allocateBestTile(groups, idx):
         
-    print("Allocating best tile for group idx", idx)
+    print("\n\nAllocating best tile for group idx", idx)
     
     foundBetterTile = False
     
+    groups[idx].printGroupData()
+    
     bestTileIdx = 0
-    bestTileRB = 0
+    bestTileRB  = 0
     bestTileValue = 0
     bestTileQuality = 0
     for t in range(T):
         for q in range(Q):
             if groups[idx].tiles[t][q] == -1 and groups[idx].Ctm[t][q] != 0: # that means that this tile has not been allocated to the group yet
             
-                curValue = (math.log10(V[q])*tileWeights[t])/groups[idx].Ctm[t][q]
+                #curValue =  getTileUtility(t,V[q])/groups[idx].Ctm[t][q]
+                curValue = groups[idx].effUtil[t][q]/groups[idx].Ctm[t][q]
                 neededRB = math.ceil(groups[idx].Ctm[t][q]/groups[idx].mcs)
                 
                 if curValue > bestTileValue and groups[idx].residualRB >= neededRB:
@@ -770,27 +840,24 @@ def allocateBestTile(groups, idx):
                     bestTileQuality = q
                     bestTileRB = neededRB
                     
-                    
     if foundBetterTile:
         groups[idx].tiles[bestTileIdx][bestTileQuality] = bestTileQuality
         groups[idx].residualRB -= bestTileRB
-        print("\nBest tile: ", bestTileIdx, " at quality ", bestTileQuality, " with rate ", V[bestTileQuality], "kbps and additional RB ", bestTileRB)
-        groups[idx].printGroupData()
+        print("\nBest tile: ", bestTileIdx, " at quality ", bestTileQuality, " with rate ", V[bestTileQuality], "kbps and additional RB ", bestTileRB, " utility increase ", bestTileValue)
+        #groups[idx].printGroupData()
     else:
         print("No more tiles to check or no RBs left")
         bestTileIdx = -1
         bestTileQuality = -1
+        bestTileRB = -1
+        bestTileValue = -1
     
     
-    return [bestTileIdx, bestTileQuality]
+    return [bestTileIdx, bestTileQuality, bestTileRB, bestTileValue]
 
     
 def crossLayerRateSelection(groups):
     print("CrossLayer Rate Selection, Number of groups: ", len(groups))
-        
-    consumedRBs = initializeRateForLowestRepresentation(groups)  # charge cost of lowest quality to lowest group, and allocate the lowest tiles to all groups.
-    #for idx in range(len(groups)):
-    #generateTileRepresentationCostMatrix(groups, idx)  # generate the cost matrix as eq. (18) for all groups
     
     for g in groups:
         gIdx = g.id -1
@@ -798,41 +865,62 @@ def crossLayerRateSelection(groups):
         curRate = 0
         
         if gIdx == 0: # if this is the first group we need to substract the rate already given by the initialization
-            curRate += consumedRBs*groups[0].mcs
+            consumedRBs = initializeRateForLowestRepresentation(groups)  # charge cost of lowest quality to lowest group, and allocate the lowest tiles to all groups.
+            curRate = consumedRBs*groups[0].mcs
             generateTileRepresentationCostMatrixForLowestGroup(groups)
+            curUtil = g.Utility
         else:
             updateTileRepresentationCostMatrix(groups, gIdx) # update the cost matrix of each group based on the tile allocation of the previous group
             g.printGroupData()
             updateTileSelectionMatrix(groups, gIdx)          # update the selected tiles to those of the previous group
             g.printGroupData()
-            input("Press Enter to continue...\n")
-            
+        
+        
+        input("Press Enter to continue...\n")
+        
         
         while curRate <= g.maxRate:
             result = allocateBestTile(groups, gIdx)
             
-            selectedTile = result[0]
-            selectedQuality = result[1]
+            selectedTile     = result[0]
+            selectedQuality  = result[1]
+            selectedTileRBs  = result[2]
+            selectedTileUtil = result[3]
             
             if selectedTile == -1 and selectedQuality == -1: # this means that all possible tiles have been allocated
                 print("Allocated all best tiles for group idx ", gIdx)
                 break;
             
             additionalRate = groups[gIdx].Ctm[ selectedTile ][ selectedQuality ]
-            print("Previous Rate: ", curRate,"\t Additional Rate: ", additionalRate, "\tNew Rate: ", curRate+additionalRate)
-            print("Previous Util: ", curUtil, "\tNew Util: ", curUtil+math.log10(additionalRate)*tileWeights[ selectedTile ])
+            #print("Previous Rate: ", curRate,"\t Additional Rate: ", additionalRate, "\tNew Rate: ", curRate+additionalRate)
+            #print("Previous Util: ", curUtil, "\tNew Util: ", curUtil+math.log10(additionalRate)*tileWeights[ selectedTile ])
             curRate += additionalRate
-            curUtil += math.log10(additionalRate)*tileWeights[ selectedTile ]
+            curUtil += selectedTileUtil
             
+            g.Utility = curUtil
+            g.pairs.append([g.RBs-g.residualRB, g.Utility])
+            
+            
+            print("\n\nAFTER")
+            g.printGroupData()
+            input("Press Enter to continue...\n")
             
             if curRate > g.maxRate:
                 print("ALLOCATED RATE GREATER THAN MAX RATE")
                 exit()
-            
-    exit()
-    
+        
+        print("\n\n\n")
+        g.printGroupData()
+        g.curvefiting()
+        exit()
 
 
+def getTotalGroupsUtility(groups):
+    totalUtility = 0
+    for g in groups:
+        totalUtility += g.Utility
+        
+    return totalUtility
 
 def crossLayer():
 
@@ -845,9 +933,9 @@ def crossLayer():
         maxU = U
         
         # -- A
-        #for i in range(2):
-        crossLayergrouping()
-        
+        for i in range(2):
+            crossLayergrouping()
+        input("press enter\n")
         # -- B
         U = 0
         numGroups  = len(userGroups)
@@ -855,16 +943,22 @@ def crossLayer():
         groups = []
         for i in range(numGroups):
             groups.append(Group(i+1, perGroupRB, min(userGroups[i]), userGroups[i])) # create group class objects, i.e., the per group data
-                
  
+        # -- B
         crossLayerResourceAllocation(groups)
-        
+ 
         # -- C
         crossLayerRateSelection(groups)
-        exit()
+ 
+        '''
+        while 1:
+            calculateResourceAllocationAndRateSelection(groups)
+            if U < getTotalGroupsUtility(groups):
+                U = getTotalGroupsUtility(groups)
+            else:
+                break;
+        '''
     
-   
-    exit()
 
 
 if __name__ == "__main__":
