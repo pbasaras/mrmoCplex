@@ -547,8 +547,8 @@ def optimalPanoramicVideo():
 ##############################################################################################################
 
 
-def getTileUtility(t,rate):
-    return math.log10(rate)*tileWeights[t]
+def getTileUtility(rate):
+    return numpy.log10(rate)
 
 def groupSplitHeuristic():
     global MaxSE, userGroups
@@ -676,10 +676,10 @@ class Group:
             tmp = []
             for q in range(Q):
                 if q == 0:
-                    effectiveUtil = getTileUtility(t, V[q])
+                    effectiveUtil = getTileUtility(V[q])
                     tmp.append( effectiveUtil )
                 else:
-                    effectiveUtil = getTileUtility(t, V[q]) - getTileUtility(t, V[q-1])
+                    effectiveUtil = getTileUtility(V[q]) - getTileUtility(V[q-1])
                     tmp.append( effectiveUtil )
             self.effUtil.append(tmp)
     
@@ -705,15 +705,18 @@ class Group:
         self.Bg = popt[1]
         print(popt)
         
-        #f= popt[0]*numpy.log10(x_data*popt[1])
+        f= popt[0]*numpy.log10(x_data*popt[1])
         
         #fit = numpy.polyfit(x_data, y_data, 1)
         #f = fit[0]*x_data-fit[1]
         
-        #plt.plot(x_data, y_data, "o")
-        #plt.plot(x_data,f)
-        #plt.show()
-        
+        plt.plot(x_data, y_data, "o")
+        plt.plot(x_data,f, label='fit params: a=%5.3f, b=%5.3f' % tuple(popt))
+        plt.xlabel('RBs')
+        plt.ylabel('Utility')
+        plt.legend()
+        fileName = "group_" + str(self.id)
+        plt.savefig(fileName, format="eps")
         #exit()
     
     def printGroupData(self):
@@ -723,6 +726,7 @@ class Group:
 
         
 
+# den prepei na einai v[q] - v[q_selected]?
 def generateTileRepresentationCostMatrixForLowestGroup(groups):
 
     for t in range(T):
@@ -794,10 +798,10 @@ def initializeRateForLowestRepresentation(groups):
     totalRate = 0
     for g in groups:
         for t in range(T):
-            g.tiles[t][0] = 0
+            g.tiles[t][0] = 0 # tile 0, the lowest representation tile is selected
             if g.id == 1: # allocate the necesary rate of the lower representation only to the first group
                 totalRate += V[0]
-                g.Utility += getTileUtility(t,V[0])
+                g.Utility += getTileUtility(V[0])*tileWeights[t]
 
     consumedRB = math.ceil(totalRate/groups[0].mcs)
     print("INITIALIZING FIRST GROUP\n\tNecessary Rate: ", totalRate, "\tmcs: ", groups[0].mcs,"\tAvailable RB ", groups[0].RBs ,"\tRB needed ", consumedRB)
@@ -830,12 +834,12 @@ def allocateBestTile(groups, idx):
             if groups[idx].tiles[t][q] == -1 and groups[idx].Ctm[t][q] != 0: # that means that this tile has not been allocated to the group yet
             
                 #curValue =  getTileUtility(t,V[q])/groups[idx].Ctm[t][q]
-                curValue = groups[idx].effUtil[t][q]/groups[idx].Ctm[t][q]
+                curValue = (groups[idx].effUtil[t][q]*tileWeights[t])/groups[idx].Ctm[t][q]
                 neededRB = math.ceil(groups[idx].Ctm[t][q]/groups[idx].mcs)
                 
                 if curValue > bestTileValue and groups[idx].residualRB >= neededRB:
                     foundBetterTile = True
-                    bestTileValue = curValue
+                    bestTileValue = groups[idx].effUtil[t][q]*tileWeights[t]
                     bestTileIdx = t
                     bestTileQuality = q
                     bestTileRB = neededRB
@@ -915,12 +919,14 @@ def crossLayerRateSelection(groups):
         exit()
 
 
+
 def getTotalGroupsUtility(groups):
     totalUtility = 0
     for g in groups:
         totalUtility += g.Utility
         
     return totalUtility
+    
 
 def crossLayer():
 
