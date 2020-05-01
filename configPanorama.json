@@ -1,6 +1,6 @@
 {
   "Users":{
-    "number": 10,
+    "number": 50,
     "mcs distribution": "uniform"
   },
   
@@ -12,14 +12,14 @@
   
   "Multicast Groups": {
     "number": 5,
-    "RBs": 100,
+    "RBs": 20,
     "group mcs": [155, 195, 253, 318, 360, 439, 515, 597, 675, 733]
   },
 
   "Video":{
-    "tiles": 3,
+    "tiles": 32,
     "representations": 4,
-    "bitrate": [289, 437, 714, 1220, 2167]
+    "bitrate": [13, 200, 714, 1220, 2167]
   }
 }
 

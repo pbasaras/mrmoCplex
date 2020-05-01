@@ -1,6 +1,10 @@
 import sys, json ,cplex, numpy, math
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
+from scipy.optimize import *
+from numpy import *
+import pandas as pd
+import statistics
+
 
 I=0
 T=4;
@@ -19,15 +23,21 @@ user_mcs=[]
 group_mcs=[]
 tileWeights = []
 utility=[]
-debug = 1
+debug = 0
+
+
+optGap = 0.05
+
+RESULTS = []
 
 
 
 # crossLayer Optimization : globecom_2018
 MaxSE = 0
 userGroups = []
-groupResources = []
-groupTiles = []
+minRBForLowestGroup=0
+#groupResources = []
+#groupTiles = []
 
 def printProblemSolution(problem):
 
@@ -35,6 +45,8 @@ def printProblemSolution(problem):
     print("Objective Value: ", problem.solution.get_objective_value() )
     print("Problem status: ", problem.solution.status[problem.solution.get_status()] )
     print("Solution string: ", problem.solution.get_status_string())
+
+    return
 
     curVar = problem.variables.get_names(0);
     for x in range(problem.variables.get_num()):
@@ -206,12 +218,13 @@ def generateWifiConnections(I, AP, minWiFiRate, maxWiFiRate):
     
 def readConfiguration():
 
-    global I, AP, K, user_mcs, group_mcs, Rmax, Bm, h_i_m, V, T, Q, RBs
+    global I, AP, K, user_mcs, group_mcs, Rmax, Bm, h_i_m, V, T, Q, RBs, utility
 
     user_mcs = []
     group_mcs = []
     Rmax = []
     h_i_m = []
+    utility = []
 
     with open('configPanorama.json', 'r') as myfile:
         data = myfile.read()
@@ -525,14 +538,13 @@ def generateProblemConstraints(problem):
     
     
 
-def optimalPanoramicVideo():
+def optimalPanoramicVideo(competitors):
 
     problem = cplex.Cplex()
     problem.objective.set_sense(problem.objective.sense.maximize)
     problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
     #problem.parameters.timelimit.set(1000) # ~16 minutes
-    
-    problem.parameters.mip.tolerances.mipgap.set(0.05)
+    problem.parameters.mip.tolerances.mipgap.set(optGap)
     
     generateProblemVariables(problem)
     generateProblemConstraints(problem)
@@ -540,8 +552,11 @@ def optimalPanoramicVideo():
     problem.solve()
    
     #printNewSolutionPerUser(problem)
-    #printProblemSolution(problem)
+    printProblemSolution(problem)
     #printOutput(problem)
+    print("PUMA: Obj Value: ", problem.solution.get_objective_value())
+    RESULTS[4]+=problem.solution.get_objective_value()
+    competitors[4].values.append(problem.solution.get_objective_value())
     
 ##############################################################################################################
 ##############################################################################################################
@@ -620,20 +635,92 @@ def crossLayergrouping():
         groupSplitHeuristic()
         
     
-def calculateGroupResources():
-    print(1)
+def calculateGroupResources(groups):
+    print(1111111)
+    print("\n\n\n")
+    for g in groups:
+        g.printGroupData()
+        
+    exit()
+
+
+
+lagGroups = 0
+lagCon = []
+laSol = []
+
+def getMaxLagrangeSolution(groups):
+     print(laSol)
+
+def lagrangeFunction(z):
+
+    global lagGroups, lagCon
+    #print(laGroups)
+    
+    x=[] # the variables
+    x.append(z[0]) # this is for lambda
+    for i in range(lagGroups):
+        x.append(z[i+1]) # this is a variable for the RBs of each group
+   
+    F = empty((lagGroups+1)) # plus 1 for the lambda
+    
+    for g in range(lagGroups):
+        F[0] = x[0]*x[1] - lagCon[g]
+        F[1] = x[0]*x[2] - lagCon[g]
+    
+    return F
+
+
+def addUnique(z):
+
+    global laSol
+    
+    for elem in z:
+      if elem < 0: # drop negative values
+        return
+    
+    for sol in laSol:
+        if math.floor(sol[1]) == math.floor(z[1]) and math.floor(sol[2]) == math.floor(z[2]): # drop already included values
+            return
+    
+    for i in range(len(z)):
+        if i >0:
+            print(i)#z[i]=math.floor(z[i]) # take the lowest integer
+    
+    laSol.append(z.tolist())
+    
 
 def crossLayerResourceAllocation(groups):
-    print("CrossLayer Resource Allocation")
+    print("CrossLayer Resource Allocation, Number of groups ", len(groups))
     
-    numGroups = len(groups)
-    print("\tNumber of groups", numGroups)
+    global lagGroups, lagCon, laSol
     
-    if numGroups == 1:
-        groupResources.append(RBs)
-        print("\tGroup RBs",  groupResources)
-    else:
-        calculateGroupResources()
+    laSol = []
+    tmp=[]
+    lagGroups = len(groups)
+    
+    for g in groups:
+        g.printGroupData()
+        lagCon.append( g.Ag*(g.RBs-g.residualRB) )
+        print("id: ", g.id, "\n\tlaCon: ", lagCon[g.id-1], "\n\tAg: ", g.Ag)
+
+    eqRB = floor(RBs/lagGroups)
+    for i in range(10):
+        zGuess = array([0,groups[0].RBs-groups[0].residualRB, groups[1].RBs-groups[1].residualRB])
+        zGuess = array([0,eqRB,eqRB])
+        #zGuess = array([0,20,40])
+
+        z = fsolve(lagrangeFunction,zGuess)
+        tmp.append(z.tolist())
+        addUnique(z)
+        
+    
+    #getMaxLagrangeSolution(groups)
+    
+    print(laSol,"\n")
+    print(tmp)
+   
+    exit()
 
 
 
@@ -695,15 +782,15 @@ class Group:
         x_data = numpy.array(x_data)
         y_data = numpy.array(y_data)
         
-        print(x_data)
-        print(y_data)
-        print(self.pairs)
+        #print(x_data)
+        #print(y_data)
+        #print(self.pairs)
         popt, pcov = curve_fit(curveFitFunction, x_data, y_data, maxfev=100000)
         
         
         self.Ag = popt[0]
         self.Bg = popt[1]
-        print(popt)
+        #print(popt)
         
         f= popt[0]*numpy.log10(x_data*popt[1])
         
@@ -715,12 +802,12 @@ class Group:
         plt.xlabel('RBs')
         plt.ylabel('Utility')
         plt.legend()
-        fileName = "group_" + str(self.id)
+        fileName = "group_" + str(self.id) +".eps"
         plt.savefig(fileName, format="eps")
         #exit()
     
     def printGroupData(self):
-        print("-------- Group Data --------\nId: ", self.id,"\nGroup Utility: ", self.Utility,"\neffUtil: ", self.effUtil, "\nUsers: ", self.users,"\nRBs: ", self.RBs,"\nResidual RB: ", self.residualRB ,"\nmcs: ", self.mcs, "\nrate: ", self.maxRate,"kbps\npais: ", self.pairs)
+        print("-------- Group Data --------\nId: ", self.id,"\nGroup Utility: ", self.Utility,"\neffUtil: ", self.effUtil, "\nUsers: ", self.users,"\nRBs: ", self.RBs,"\nResidual RB: ", self.residualRB ,"\nmcs: ", self.mcs, "\nrate: ", self.maxRate,"kbps\npais: ", self.pairs,"\nAg: ", self.Ag,"\nBg: ", self.Bg)
         print("Cost Matrix: ", self.Ctm)
         print("Tile Qualities: ", self.tiles)
 
@@ -808,7 +895,7 @@ def initializeRateForLowestRepresentation(groups):
     
     groups[0].residualRB -= consumedRB
     groups[0].pairs.append([consumedRB, groups[0].Utility])
-    groups[0].printGroupData()
+    #groups[0].printGroupData()
     
     if consumedRB > groups[0].RBs:
         print("INFISIBLE RESOURCE ALLOCATION")
@@ -823,7 +910,7 @@ def allocateBestTile(groups, idx):
     
     foundBetterTile = False
     
-    groups[idx].printGroupData()
+    #groups[idx].printGroupData()
     
     bestTileIdx = 0
     bestTileRB  = 0
@@ -875,12 +962,12 @@ def crossLayerRateSelection(groups):
             curUtil = g.Utility
         else:
             updateTileRepresentationCostMatrix(groups, gIdx) # update the cost matrix of each group based on the tile allocation of the previous group
-            g.printGroupData()
+            #g.printGroupData()
             updateTileSelectionMatrix(groups, gIdx)          # update the selected tiles to those of the previous group
-            g.printGroupData()
+            #g.printGroupData()
         
         
-        input("Press Enter to continue...\n")
+        #input("Press Enter to continue...\n")
         
         
         while curRate <= g.maxRate:
@@ -904,19 +991,19 @@ def crossLayerRateSelection(groups):
             g.Utility = curUtil
             g.pairs.append([g.RBs-g.residualRB, g.Utility])
             
-            
-            print("\n\nAFTER")
-            g.printGroupData()
-            input("Press Enter to continue...\n")
+            #print("\n\nAFTER")
+            #g.printGroupData()
+            #input("Press Enter to continue...\n")
             
             if curRate > g.maxRate:
                 print("ALLOCATED RATE GREATER THAN MAX RATE")
                 exit()
         
         print("\n\n\n")
-        g.printGroupData()
+        #g.printGroupData()
         g.curvefiting()
-        exit()
+    
+
 
 
 
@@ -938,10 +1025,11 @@ def crossLayer():
     
         maxU = U
         
+        print("--------- Entering iteration 1 ---------")
         # -- A
-        for i in range(2):
-            crossLayergrouping()
-        input("press enter\n")
+        crossLayergrouping()
+        input("press enter")
+        
         # -- B
         U = 0
         numGroups  = len(userGroups)
@@ -949,22 +1037,540 @@ def crossLayer():
         groups = []
         for i in range(numGroups):
             groups.append(Group(i+1, perGroupRB, min(userGroups[i]), userGroups[i])) # create group class objects, i.e., the per group data
- 
-        # -- B
-        crossLayerResourceAllocation(groups)
- 
-        # -- C
-        crossLayerRateSelection(groups)
- 
-        '''
-        while 1:
-            calculateResourceAllocationAndRateSelection(groups)
-            if U < getTotalGroupsUtility(groups):
-                U = getTotalGroupsUtility(groups)
-            else:
+            
+        totalUtility = getTotalGroupsUtility(groups)
+        
+        round = 0
+        while U <= totalUtility:
+            # -- B
+            if round > 0:
+                crossLayerResourceAllocation(groups)
+                
+            # -- C
+            crossLayerRateSelection(groups)
+        
+            # save state at this point
+            totalUtility = getTotalGroupsUtility(groups)
+            
+            if totalUtility < U:
                 break;
-        '''
+                
+            U = totalUtility
+            round +=1
+           
+            if numGroups == 1:# no reason to make another round of resourse allocation when there is one group
+                break;
+           
+        
+        print("Exiting Iteration 2\n\tmaxU ", maxU,"\n\tU", U, "\n\tgroups ", numGroups)
+        if maxU > U:
+            break
+
+
+
+def oneMulticastGroup(competitors):
+
+    minMCS = min(user_mcs)
+
+    problem = cplex.Cplex()
+    problem.objective.set_sense(problem.objective.sense.maximize)
+    problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
+    #problem.parameters.timelimit.set(1000) # ~16 minutes
+    problem.parameters.mip.tolerances.mipgap.set(optGap)
+
+    # v.t.q
+    for t in range(T):
+        for q in range(Q):
+            varName = "v." + str(t+1) + "." + str(q+1)
+            objVal = math.log10(V[q])*tileWeights[t]
+            problem.variables.add(obj=[objVal ],
+                                    lb=[0.0],
+                                    ub=[1.0],
+                                    types=["B"],
+                                    names=[varName])
+
+    # sum_t( sum_q( v.t.q* b.t.q ) ) <= minMCS*RBs
+    theVars=[]
+    theCoefs=[]
+    for t in range(T):
+        for q in range(Q):
+            varName = "v." + str(t+1) + "." + str(q+1)
+            theVars.append(varName)
+            theCoefs.append(V[q])
     
+    problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                    senses=["L"],
+                                    rhs=[minMCS*RBs])
+    
+    if debug == 1:
+        print ("\t\t",theVars, theCoefs, " <= ", minMCS*RBs)
+    
+
+    # sum_q( v.t.q ) = 1
+    for t in range(T):
+        theVars=[]
+        theCoefs=[]
+        for q in range(Q):
+            varName = "v."+str(t+1)+"."+str(q+1)
+            theVars.append(varName)
+            theCoefs.append(1)
+        problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                        senses=["E"],
+                                        rhs=[1.0])
+        if debug == 1:
+            print ("\t\t",theVars, theCoefs, " <= ", 1)
+    
+    
+    problem.solve()
+    printProblemSolution(problem)
+    print("1-MG: Obj Value: ", problem.solution.get_objective_value()*I)
+    RESULTS[0] += problem.solution.get_objective_value()*I
+    competitors[0].values.append(problem.solution.get_objective_value()*I)
+    
+def optimalLTEVariables(problem):
+    # y.k.t.q
+    for k in range(K):
+        for t in range(T):
+            for q in range(Q):
+                varName = "y." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                problem.variables.add(obj=[0.0],
+                                        lb=[0.0],
+                                        ub=[1.0],
+                                        types=["B"],
+                                        names=[varName])
+    # z.k
+    for k in range(K):
+        varName = "z." + str(k+1)
+        problem.variables.add(obj=[0.0],
+                              lb=[0.0],
+                              ub=[ float(RBs) ],
+                              types=["C"],
+                              names=[varName])
+             
+    # m.i.k.t.q
+    for i in range(I):
+        for k in range(K):
+            for t in range(T):
+                for q in range(Q):
+                    varName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                    problem.variables.add(obj=[ utility[t][q] ],
+                                          lb=[0.0],
+                                          ub=[1.0],
+                                          types=["B"],
+                                          names=[varName])
+
+                                  
+    if debug ==1:
+        print("\tNames: ", problem.variables.get_names())
+        #print("\tTypes: ", problem.variables.get_types())
+        #print("\t\nObj Function: ", problem.objective.get_linear())
+
+
+
+def optimalLTEConstraints(problem):
+   print("Generating problem constraints")
+
+
+   # sum_k(z.k) <= RBs
+   theVars=[]
+   theCoefs=[]
+   for k in range(K):
+       tmpName = "z." + str(k+1)
+       theVars.append(tmpName)
+       theCoefs.append(1)
+       
+   if debug == 1:
+       print ("\t\t",theVars, theCoefs, " <= ", RBs)
+       
+   problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                  senses=["L"],
+                                  rhs=[float(RBs)])
+                                  
+   
+   # sum_t( sum_q( y.k.t.q*b.t.q ) ) <= z.k*c.k
+   for k in range(K):
+       theVars = []
+       theCoefs = []
+       for t in range(T):
+           for q in range(Q):
+               tmpName = "y." + str(k+1) + "." + str(t+1) + "." +str(q+1)
+               theVars.append(tmpName)
+               theCoefs.append(V[q])
+               
+       tmpName  = "z." + str(k+1)
+       theVars.append(tmpName)
+       theCoefs.append(-group_mcs[k])
+       
+       if debug == 1:
+           print("\t\t", theVars, theCoefs, "<= 0")
+       
+       problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                       senses=["L"],
+                                       rhs=[0.0])
+   
+   
+   # sum_i( m.i.k.t.q ) - y.k.t.q <= 0
+   for k in range(K):
+       for t in range(T):
+            for q in range(Q):
+               theVars = []
+               theCoefs = []
+               for i in range(I):
+                   tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." +str(q+1)
+                   theVars.append(tmpName)
+                   theCoefs.append(1)
+               
+               tmpName = "y." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+               theVars.append(tmpName)
+               theCoefs.append(-AUXILIARY)
+
+               if debug == 1:
+                   print("\t\t", theVars, theCoefs, "<= 0")
+                   
+               problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                               senses=["L"],
+                                               rhs=[0.0])
+                                           
+
+   # sum_k( sum_q( m.i.k.t.q) ) + sum_w( sum_q( x.i.w.t.q) ) = 1
+   for i in range(I):
+       for t in range(T):
+           theVars = []
+           theCoefs = []
+           for k in range(K):
+               for q in range(Q):
+                   tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                   theVars.append(tmpName)
+                   theCoefs.append(1)
+           '''
+           for w in range(AP):
+               for q in range(Q):
+                   tmpName = "x." + str(i+1) + "." + str(w+1) + "." + str(t+1) + "." + str(q+1)
+                   theVars.append(tmpName)
+                   theCoefs.append(1)
+           '''
+           
+           if debug == 1:
+               print("\t\t", theVars, theCoefs, "= 1")
+               
+           problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                           senses=["E"],
+                                           rhs=[1.0])
+   
+   
+   
+   #sum_q( m.i.k.t.q*c.k ) <= c.i
+   for i in range(I):
+       for k in range(K):
+           for t in range(T):
+               theVars = []
+               theCoefs = []
+               for q in range(Q):
+                   tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                   theVars.append(tmpName)
+                   theCoefs.append(group_mcs[k])
+                   
+               if debug == 1:
+                   print("\t\t", theVars, theCoefs, "<=", user_mcs[i])
+                   
+               problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                               senses=["L"],
+                                               rhs=[user_mcs[i]])
+
+
+
+def optimalLTE(competitors):
+
+    problem = cplex.Cplex()
+    problem.objective.set_sense(problem.objective.sense.maximize)
+    problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
+    #problem.parameters.timelimit.set(1000) # ~16 minutes
+    problem.parameters.mip.tolerances.mipgap.set(optGap)
+    
+    
+    optimalLTEVariables(problem)
+    optimalLTEConstraints(problem)
+    problem.solve()
+    printProblemSolution(problem)
+    print("O-LTE: Obj Value: ", problem.solution.get_objective_value())
+    RESULTS[1] += problem.solution.get_objective_value()
+    competitors[1].values.append(problem.solution.get_objective_value())
+
+
+def optimalGWOLVariables(problem):
+
+    print("\nGenerating GWOL problem variables")
+    
+    # y.k.t.q
+    for k in range(K):
+        for t in range(T):
+            for q in range(Q):
+                varName = "y." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                problem.variables.add(obj=[0.0],
+                                        lb=[0.0],
+                                        ub=[1.0],
+                                        types=["B"],
+                                        names=[varName])
+    
+    
+    # z.k
+    for k in range(K):
+        varName = "z." + str(k+1)
+        problem.variables.add(obj=[0.0],
+                              lb=[0.0],
+                              ub=[ float(RBs) ],
+                              types=["C"],
+                              names=[varName])
+                                  
+    # m.i.k.t.q
+    for i in range(I):
+        for k in range(K):
+            for t in range(T):
+                for q in range(Q):
+                    varName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                    problem.variables.add(obj=[ utility[t][q] ],
+                                          lb=[0.0],
+                                          ub=[1.0],
+                                          types=["B"],
+                                          names=[varName])
+                                          
+    # x.i.w.t.q
+    for i in range(I):
+        for w in range(AP):
+            for t in range(T):
+                for q in range(Q):
+                    varName = "x." + str(i+1) + "." + str(w+1) + "." + str(t+1) + "." + str(q+1)
+                    problem.variables.add(obj=[ utility[t][q] ],
+                                          lb=[0.0],
+                                          ub=[1.0],
+                                          types=["B"],
+                                          names=[varName])
+
+                                  
+    if debug ==1:
+        print("\tNames: ", problem.variables.get_names())
+        print("\tTypes: ", problem.variables.get_types())
+        print("\t\nObj Function: ", problem.objective.get_linear())
+
+    #exit()
+
+
+def optimalGWOLConstraints(problem):
+
+    print("Generating problem constraints")
+    
+    usersPerAp = numpy.zeros(AP).tolist()
+    for i in range(I):
+        for w in range(AP):
+            if h_i_m[i][w] >0:
+                usersPerAp[w] +=1
+    #print(usersPerAp)
+ 
+    # sum_k(z.k) <= RBs
+    theVars=[]
+    theCoefs=[]
+    for k in range(K):
+        tmpName = "z." + str(k+1)
+        theVars.append(tmpName)
+        theCoefs.append(1)
+        
+    if debug == 1:
+        print ("\t\t",theVars, theCoefs, " <= ", RBs)
+        
+    problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                   senses=["L"],
+                                   rhs=[float(RBs)])
+    
+    '''
+    # sum_i(a.i.w) <= 1
+    for w in range(AP):
+        theVars = []
+        theCoefs = []
+        for i in range(I):
+            tmpName = "a." +str(i+1) + "." + str(w+1)
+            theVars.append(tmpName)
+            theCoefs.append(1)
+            
+        if debug == 1:
+            print("\t\t", theVars, theCoefs, "<= 1")
+            
+        problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                        senses=["L"],
+                                        rhs=[ 1.0 ])
+    '''
+    
+    
+    # sum_t( sum_q( y.k.t.q*b.t.q ) ) <= z.k*c.k
+    for k in range(K):
+        theVars = []
+        theCoefs = []
+        for t in range(T):
+            for q in range(Q):
+                tmpName = "y." + str(k+1) + "." + str(t+1) + "." +str(q+1)
+                theVars.append(tmpName)
+                theCoefs.append(V[q])
+                
+        tmpName  = "z." + str(k+1)
+        theVars.append(tmpName)
+        theCoefs.append(-group_mcs[k])
+        
+        if debug == 1:
+            print("\t\t", theVars, theCoefs, "<= 0")
+        
+        problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                        senses=["L"],
+                                        rhs=[0.0])
+    
+    
+    # sum_i( m.i.k.t.q ) - BigValue*y.k.t.q <= 0
+    for k in range(K):
+        for t in range(T):
+             for q in range(Q):
+                theVars = []
+                theCoefs = []
+                for i in range(I):
+                    tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." +str(q+1)
+                    theVars.append(tmpName)
+                    theCoefs.append(1)
+                
+                tmpName = "y." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                theVars.append(tmpName)
+                theCoefs.append(-AUXILIARY)
+
+                if debug == 1:
+                    print("\t\t", theVars, theCoefs, "<= 0")
+                    
+                problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                                senses=["L"],
+                                                rhs=[0.0])
+                    
+    
+    
+    # sum_i( sum_w( x.t.w.t.q*b.t.q )) <= fixedWiFi Rate
+    for i in range(I):
+        for w in range(AP):
+            theVars = []
+            theCoefs = []
+            for t in range(T):
+                for q in range(Q):
+                    tmpName = "x." + str(i+1) + "." + str(w+1) + "." + str(t+1) + "." + str(q+1)
+                    theVars.append(tmpName)
+                    theCoefs.append( V[q] )
+            
+            #tmpName = "a." + str(i+1) + "." + str(w+1)
+            #theVars.append(tmpName)
+            #theCoefs.append(-h_i_m[i][w])
+            
+            if debug == 1:
+                print("\t\t", theVars, theCoefs, "<= 0")
+                
+            fixedWiFiRate = 0
+            if h_i_m[i][w] >0:
+                fixedWiFiRate = h_i_m[i][w]/usersPerAp[w]
+                
+            problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                            senses=["L"],
+                                            rhs=[fixedWiFiRate])
+                                            
+       
+
+    # sum_k( sum_q( m.i.k.t.q) ) + sum_w( sum_q( x.i.w.t.q) ) = 1
+    for i in range(I):
+        for t in range(T):
+            theVars = []
+            theCoefs = []
+            for k in range(K):
+                for q in range(Q):
+                    tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                    theVars.append(tmpName)
+                    theCoefs.append(1)
+                    
+            for w in range(AP):
+                for q in range(Q):
+                    tmpName = "x." + str(i+1) + "." + str(w+1) + "." + str(t+1) + "." + str(q+1)
+                    theVars.append(tmpName)
+                    theCoefs.append(1)
+                    
+            
+            if debug == 1:
+                print("\t\t", theVars, theCoefs, "= 1")
+                
+            problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                            senses=["E"],
+                                            rhs=[1.0])
+    
+    
+    
+    #sum_q( m.i.k.t.q*c.k ) <= c.i
+    for i in range(I):
+        for k in range(K):
+            for t in range(T):
+                theVars = []
+                theCoefs = []
+                for q in range(Q):
+                    tmpName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
+                    theVars.append(tmpName)
+                    theCoefs.append(group_mcs[k])
+                    
+                if debug == 1:
+                    print("\t\t", theVars, theCoefs, "<=", user_mcs[i])
+                    
+                problem.linear_constraints.add(lin_expr=[cplex.SparsePair(theVars, theCoefs)],
+                                                senses=["L"],
+                                                rhs=[user_mcs[i]])
+    
+
+
+
+def gwol(competitors):
+
+    problem = cplex.Cplex()
+    problem.objective.set_sense(problem.objective.sense.maximize)
+    problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
+    #problem.parameters.timelimit.set(1000) # ~16 minutes
+    problem.parameters.mip.tolerances.mipgap.set(optGap)
+    
+    optimalGWOLVariables(problem)
+    optimalGWOLConstraints(problem)
+    problem.solve()
+    printProblemSolution(problem)
+    print("GWOL: Obj Value: ", problem.solution.get_objective_value())
+    RESULTS[3]+=problem.solution.get_objective_value()
+    competitors[3].values.append(problem.solution.get_objective_value())
+
+
+def writeResults(iterations, numCompetitors):
+    # initialize list of lists
+    
+    data = []
+    names = ['1-MG', 'O-LTE', 'CROSS', 'GWOL', 'PUMA']
+    
+    for i in range(numCompetitors):
+        curStd = -1
+        if len(competitors[i].values) >0:
+            curStd = statistics.stdev(competitors[i].values)
+        data.append([names[i], RESULTS[i]/iterations, curStd])
+    
+    # Create the pandas DataFrame
+    df = pd.DataFrame(data, columns = ['Name', 'Utility', 'Std'])
+    
+    print(Bm)
+    fileName="RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0])+"_APs_"+str(AP)+".csv"
+    
+    df.to_csv(fileName)
+    print(df)
+
+
+class competitor:
+    def __init__(self, name):
+        self.name=name
+        self.utility=0
+        self.std=0
+        self.groups=0
+        self.values=[]
+        
+    def printInfo(self):
+        print("Name: ", self.name,"\nUtility: ", self.utility, "\nstd: ", self.std,"\ngroups: ",self.groups,"\nValues: ", self.values)
 
 
 if __name__ == "__main__":
@@ -972,9 +1578,29 @@ if __name__ == "__main__":
     print("Panoramic Multicast Groups ( -- mrmo360 -- )")
     
     generateTileWeights(32)
+
+    numCompetitors = 5 # 1-MG | O-LTE | CROSS | GWOL | PUMA
+    RESULTS = numpy.zeros(numCompetitors) # 4 compe
+    
+    names = ['1-MG', 'O-LTE', 'CROSS', 'GWOL', 'PUMA']
+    competitors = []
+    for i in range(numCompetitors):
+        competitors.append( competitor(names[i]) )
+        #competitors[i].printInfo()
+    
     readConfiguration()
     
-    crossLayer()
+    iter =1
+    maxIters = 20
+    while iter <= maxIters:
+        print("------------------------------------------------------------------------ITERATION ", iter)
+        readConfiguration()
+        
+        oneMulticastGroup(competitors)
+        optimalLTE(competitors)
+        #crossLayer()
+        gwol(competitors)
+        optimalPanoramicVideo(competitors)
+        iter+=1
     
-    optimalPanoramicVideo()
-    
+    writeResults(maxIters, numCompetitors)
