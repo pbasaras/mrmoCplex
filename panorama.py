@@ -928,7 +928,7 @@ def crossLayerRateSelection(groups):
         
         print("\n\nTile allocation for group, ", g.id, "\tRB ", g.RBs,"\tresidualRB ", g.residualRB,"\npairs:")
         print(g.pairs)
-        input("mypairs")
+        #input("mypairs")
         
         if gIdx == 0: # if this is the first group we need to substract the rate already given by the initialization
             consumedRBs = initializeRateForLowestRepresentation(groups)  # charge cost of lowest quality to lowest group, and allocate the lowest tiles to all groups.
@@ -959,7 +959,7 @@ def crossLayerRateSelection(groups):
             g.pairs.append([g.RBs-g.residualRB, g.Utility])
             
             print("curRate ", curRate, "maxRate ", g.maxRate, "utility ", g.Utility)
-            input("evaluate selected TILE")
+            #input("evaluate selected TILE")
             
             if curRate > g.maxRate:
                 print("ALLOCATED RATE GREATER THAN MAX RATE\nGroup id", g.id)
@@ -994,7 +994,7 @@ def crossLayer(competitors):
         print("--------- Iteration 1 ---------")
         # -- A
         crossLayergrouping()
-        input("press enter")
+        #input("press enter")
         
         # -- B
         U = 0
@@ -1019,7 +1019,7 @@ def crossLayer(competitors):
             totalUtility = getTotalGroupsUtility(groups)
             
             print("PREV util", U, "\nNEW util", totalUtility,"\nnumGroups",len(groups),"\n", userGroups)
-            input("EVALUATE")
+            #input("EVALUATE")
             
             if totalUtility <= U:
                 break;
@@ -1035,9 +1035,10 @@ def crossLayer(competitors):
             break
         
         print("maxU", maxU, "\tU",U)
-        input("EXIting iteration2")
+        #input("EXIting iteration2")
         maxU = U
-        
+    
+    RESULTS[2] += maxU
     competitors[2].values.append(maxU)
 
 def oneMulticastGroup(competitors):
@@ -1562,8 +1563,6 @@ if __name__ == "__main__":
     
     readConfiguration()
     
-    crossLayer(competitors)
-    exit()
     
     iter =1
     maxIters = 2
