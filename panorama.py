@@ -13,7 +13,7 @@ K=0;
 AP=0;
 RBs=0
 AUXILIARY = 10000
-coef = 0.8
+coef = 0.6
 
 V=[]
 Bm=[]
@@ -30,6 +30,7 @@ debug = 0
 optGap = 0.04
 
 RESULTS = []
+TILEQUAL = []
 
 
 
@@ -556,9 +557,41 @@ def optimalPanoramicVideo(competitors):
     #printNewSolutionPerUser(problem)
     printProblemSolution(problem)
     #printOutput(problem)
+    print("----------------------")
+     
+     
+    gTiles = []
+     
+    for k in range(K):
+        tmp = numpy.ones(T).tolist()
+        gTiles.append(tmp)
+    for k in range(K):
+        for t in range(T):
+            gTiles[k][t]*=-1
+     
+    for k in range(K):
+        tmp = []
+        for t in range(T):
+            for q in range(Q):
+                varName = "y."+str(k+1)+"."+str(t+1)+"."+str(q+1)
+                sol = problem.solution.get_values(varName)
+                if sol > 0.5:
+                    gTiles[k][t]=q+1
+     
+    tileQualities = 0;
+    cnt = 0
+    for k in range(K):
+        if sum(gTiles[k]) != -1*len(gTiles[k]):
+            print("group", k+1,"\n\t",gTiles[k])
+            for t in range(T):
+                if gTiles[k][t] >0.5:
+                    tileQualities+=gTiles[k][t]
+                    cnt+=1
+    
     print("\n\n===================================PUMA: Obj Value: ", problem.solution.get_objective_value())
     RESULTS[4]+=problem.solution.get_objective_value()
     competitors[4].values.append(problem.solution.get_objective_value())
+    competitors[4].avgTileQuality += tileQualities/cnt
     
 ##############################################################################################################
 ##############################################################################################################
@@ -1172,7 +1205,9 @@ def oneMulticastGroup(competitors):
     print("average tile", sum(deliveredTiles)/len(deliveredTiles))
     print("\n\n===================================1-MG: Obj Value: ", problem.solution.get_objective_value()*I,"\tavg tiles ", sum(deliveredTiles)/len(deliveredTiles))
     RESULTS[0] += problem.solution.get_objective_value()*I
+    #TILEQUAL[0] += sum(deliveredTiles)/len(deliveredTiles)
     competitors[0].values.append(problem.solution.get_objective_value()*I)
+    competitors[0].avgTileQuality += sum(deliveredTiles)/len(deliveredTiles)
     
 def optimalLTEVariables(problem):
     # y.k.t.q
@@ -1374,7 +1409,9 @@ def optimalLTE(competitors):
             
     print("\n\n===================================O-LTE: Obj Value: ", problem.solution.get_objective_value(), "\t avg tiles ", tileQualities/cnt)
     RESULTS[1] += problem.solution.get_objective_value()
+    TILEQUAL[1] += tileQualities/cnt
     competitors[1].values.append(problem.solution.get_objective_value())
+    competitors[1].avgTileQuality += tileQualities/cnt
     
 
 def optimalGWOLVariables(problem):
@@ -1614,10 +1651,44 @@ def gwol(competitors):
     optimalGWOLConstraints(problem)
     problem.solve()
     printProblemSolution(problem)
+    
+    
+    print("----------------------")
+     
+     
+    gTiles = []
+    
+    for k in range(K):
+        tmp = numpy.ones(T).tolist()
+        gTiles.append(tmp)
+    for k in range(K):
+        for t in range(T):
+            gTiles[k][t]*=-1
+     
+    for k in range(K):
+        tmp = []
+        for t in range(T):
+            for q in range(Q):
+                varName = "y."+str(k+1)+"."+str(t+1)+"."+str(q+1)
+                sol = problem.solution.get_values(varName)
+                if sol > 0.5:
+                    gTiles[k][t]=q+1
+     
+    tileQualities = 0
+    cnt = 0
+    for k in range(K):
+        if sum(gTiles[k]) != -1*len(gTiles[k]):
+            print("group", k+1,"\n\t",gTiles[k])
+            for t in range(T):
+                if gTiles[k][t] >0.5:
+                    tileQualities+=gTiles[k][t]
+                    cnt+=1
+
+
     print("\n\n===================================GWOL: Obj Value: ", problem.solution.get_objective_value())
     RESULTS[3]+=problem.solution.get_objective_value()
     competitors[3].values.append(problem.solution.get_objective_value())
-
+    competitors[3].avgTileQuality += tileQualities/cnt
 
 def writeResults(iterations, numCompetitors):
     # initialize list of lists
@@ -1629,10 +1700,10 @@ def writeResults(iterations, numCompetitors):
         curStd = -1
         if len(competitors[i].values) >0:
             curStd = statistics.stdev(competitors[i].values)
-        data.append([names[i], RESULTS[i]/iterations, curStd])
+        data.append([names[i], RESULTS[i]/iterations, curStd, competitors[i].avgTileQuality/iterations])
     
     # Create the pandas DataFrame
-    df = pd.DataFrame(data, columns = ['Name', 'Utility', 'Std'])
+    df = pd.DataFrame(data, columns = ['Name', 'Utility', 'Std', 'avgTileQuality'])
     
     print(Bm)
     fileName="RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+".csv"
@@ -1648,6 +1719,7 @@ class competitor:
         self.std=0
         self.groups=0
         self.values=[]
+        self.avgTileQuality = 0
         
     def printInfo(self):
         print("Name: ", self.name,"\nUtility: ", self.utility, "\nstd: ", self.std,"\ngroups: ",self.groups,"\nValues: ", self.values)
@@ -1661,6 +1733,7 @@ if __name__ == "__main__":
 
     numCompetitors = 5 # 1-MG | O-LTE | CROSS | GWOL | PUMA
     RESULTS = numpy.zeros(numCompetitors) # 4 compe
+    TILEQUAL = numpy.zeros(numCompetitors)
     
     names = ['1-MG', 'O-LTE', 'CROSS', 'GWOL', 'PUMA']
     competitors = []
