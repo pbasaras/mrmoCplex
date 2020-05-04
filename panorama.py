@@ -13,6 +13,7 @@ K=0;
 AP=0;
 RBs=0
 AUXILIARY = 10000
+coef = 0.8
 
 V=[]
 Bm=[]
@@ -26,7 +27,7 @@ utility=[]
 debug = 0
 
 
-optGap = 0.05
+optGap = 0.04
 
 RESULTS = []
 
@@ -218,7 +219,7 @@ def generateWifiConnections(I, AP, minWiFiRate, maxWiFiRate):
     
 def readConfiguration():
 
-    global I, AP, K, user_mcs, group_mcs, Rmax, Bm, h_i_m, V, T, Q, RBs, utility
+    global I, AP, K, user_mcs, group_mcs, Rmax, Bm, h_i_m, V, T, Q, RBs, utility, coef
 
     user_mcs = []
     group_mcs = []
@@ -226,7 +227,7 @@ def readConfiguration():
     h_i_m = []
     utility = []
 
-    with open('configPanorama.json', 'r') as myfile:
+    with open('panorama.json', 'r') as myfile:
         data = myfile.read()
 
     obj = json.loads(data)
@@ -248,7 +249,7 @@ def readConfiguration():
     Rmax = [0.0]*K
     
     for k in range(K):
-        group_mcs[k] = float( tmpGroupMcs[k]*1000*0.6 )/ 1000 # kbps: divide by 100 to make it in kbps
+        group_mcs[k] = float( tmpGroupMcs[k]*1000*coef )/ 1000 # kbps: divide by 100 to make it in kbps
         Rmax[k] = float( group_mcs[k]*RBs )
 
     if obj["Users"]["mcs distribution"] == "uniform":
@@ -258,6 +259,7 @@ def readConfiguration():
     else:
         print ("Unknown distribution for user mcs")
         exit()
+        
     
     tmpVideo = obj["Video"]["bitrate"]
     V = [0]*Q
@@ -286,7 +288,7 @@ def readConfiguration():
     for t in range(T):
         tmpValues = []
         for q in range(Q):
-            tileUtil = tileWeights[t]*math.log10( V[q] )
+            tileUtil = tileWeights[t]*math.log2( V[q] )
             tmpValues.append(tileUtil)
         utility.append(tmpValues)
         
@@ -543,7 +545,7 @@ def optimalPanoramicVideo(competitors):
     problem = cplex.Cplex()
     problem.objective.set_sense(problem.objective.sense.maximize)
     problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
-    #problem.parameters.timelimit.set(1000) # ~16 minutes
+    problem.parameters.timelimit.set(1000) # ~16 minutes
     problem.parameters.mip.tolerances.mipgap.set(optGap)
     
     generateProblemVariables(problem)
@@ -554,7 +556,7 @@ def optimalPanoramicVideo(competitors):
     #printNewSolutionPerUser(problem)
     printProblemSolution(problem)
     #printOutput(problem)
-    print("PUMA: Obj Value: ", problem.solution.get_objective_value())
+    print("\n\n===================================PUMA: Obj Value: ", problem.solution.get_objective_value())
     RESULTS[4]+=problem.solution.get_objective_value()
     competitors[4].values.append(problem.solution.get_objective_value())
     
@@ -563,7 +565,7 @@ def optimalPanoramicVideo(competitors):
 
 
 def getTileUtility(rate):
-    return numpy.log10(rate)
+    return numpy.log2(rate)
 
 def groupSplitHeuristic():
     global MaxSE, userGroups
@@ -677,8 +679,8 @@ def crossLayerResourceAllocation(groups):
     
     for g in groups:
         #g.printGroupData()
-        #lagCon.append( g.Ag*(g.RBs-g.residualRB) )
-        lagCon.append(g.Ag*g.RBs)
+        lagCon.append( g.Ag*(g.RBs-g.residualRB) )
+        #lagCon.append(g.Ag*g.RBs)
         #print("id: ", g.id, "\n\tlaCon: ", lagCon[g.id-1], "\n\tAg: ", g.Ag)
 
     numVariables = 1+2*lagGroups
@@ -698,7 +700,7 @@ def crossLayerResourceAllocation(groups):
 
 
 def curveFitFunction(x,a,b):
-    return a*numpy.log10(b*x)
+    return a*numpy.log2(b*x)
 
 
     
@@ -753,6 +755,9 @@ class Group:
         print(self.pairs, self.RBs, self.residualRB)
         
         if len(self.pairs) <=1:
+            #input("curve fitting")
+            self.Ag = 0
+            self.Bg =0
             return
         
         for d in range(len(self.pairs)):
@@ -765,17 +770,21 @@ class Group:
         #print(x_data)
         #print(y_data)
         #print(self.pairs)
-        popt, pcov = curve_fit(curveFitFunction, x_data, y_data, maxfev=100000)
+        popt, pcov = curve_fit(curveFitFunction, x_data, y_data)
         
         
         self.Ag = popt[0]
         self.Bg = popt[1]
-        #print(popt)
+        print(popt)
         
-        f= popt[0]*numpy.log10(x_data*popt[1])
+        f= popt[0]*numpy.log2(x_data*popt[1])
         
         #fit = numpy.polyfit(x_data, y_data, 1)
         #f = fit[0]*x_data-fit[1]
+        
+        plt.clf()
+        plt.cla()
+        plt.close()
         
         plt.plot(x_data, y_data, "o")
         plt.plot(x_data,f, label='fit params: a=%5.3f, b=%5.3f' % tuple(popt))
@@ -785,6 +794,7 @@ class Group:
         fileName = "group_" + str(self.id) +".eps"
         plt.savefig(fileName, format="eps")
         #exit()
+        #input("curve fitting")
     
     def printGroupData(self):
         print("-------- Group Data --------\nId: ", self.id,"\nGroup Utility: ", self.Utility,"\neffUtil: ", self.effUtil, "\nUsers: ", self.users,"\nRBs: ", self.RBs,"\nResidual RB: ", self.residualRB ,"\nmcs: ", self.mcs, "\nrate: ", self.maxRate,"kbps\npais: ", self.pairs,"\nAg: ", self.Ag,"\nBg: ", self.Bg)
@@ -899,6 +909,7 @@ def allocateBestTile(groups, idx):
         groups[idx].tiles[bestTileIdx][bestTileQuality] = bestTileQuality
         groups[idx].residualRB -= bestTileRB
         print("\nBest tile: ", bestTileIdx, " at quality ", bestTileQuality, " with rate ", V[bestTileQuality], "kbps and additional RB ", bestTileRB, " utility increase ", bestTileValue)
+        print("Remaining RB ", groups[idx].residualRB)
         #groups[idx].printGroupData()
     else:
         print("No more tiles to check or no RBs left")
@@ -925,10 +936,12 @@ def crossLayerRateSelection(groups):
         g.Ctm = []
         g.pairs = []
         g.Utility = 0
+        g.Ag = 0
+        g.Bg = 0
         
         print("\n\nTile allocation for group, ", g.id, "\tRB ", g.RBs,"\tresidualRB ", g.residualRB,"\npairs:")
         print(g.pairs)
-        #input("mypairs")
+        #input("press enter")
         
         if gIdx == 0: # if this is the first group we need to substract the rate already given by the initialization
             consumedRBs = initializeRateForLowestRepresentation(groups)  # charge cost of lowest quality to lowest group, and allocate the lowest tiles to all groups.
@@ -966,20 +979,36 @@ def crossLayerRateSelection(groups):
                 exit()
         
         g.curvefiting()
-    
-
-
+        
 
 
 def getTotalGroupsUtility(groups):
+
+    '''
     totalUtility = 0
+    prevUtil = 0;
     for g in groups:
-        totalUtility += g.Utility*len(g.users)
-        
+        prevUtil = 0
+        totalUtility += (g.Utility+prevUtil)*len(g.users)
+        print("prev Util ", prevUtil, "g.Util ", g.Utility, "total", totalUtility, "users ", len(g.users))
+        prevUtil = totalUtility
+    '''
+    
+    totalUtility =0;
+    for g in groups:
+        groupUtil = 0
+        for t in range(T):
+            q = getSelectedTileQualityOfGroup(groups, g.id-1,t)
+            groupUtil += getTileUtility(V[q])*tileWeights[t]
+        groupUtil = groupUtil*len(g.users)
+        print("Utility of group ", g.id, " is ", groupUtil)
+        totalUtility +=groupUtil
+    
+    print("Total Util", totalUtility)
+    #input("EVALUATE")
+    
     return totalUtility
 
-def saveGroupState():
-    print()
 
 def crossLayer(competitors):
 
@@ -987,6 +1016,10 @@ def crossLayer(competitors):
     
     userGroups = []
     MaxSE = 0
+    finalGs = []
+
+    medianGroups = []
+    finalGroups = []
 
     maxU = 0
     while True: # exit cross layer algorithm when new utility of the new grouping algorithm is not larger than the previous one
@@ -1015,7 +1048,6 @@ def crossLayer(competitors):
             # -- C
             crossLayerRateSelection(groups)
         
-            # save state at this point
             totalUtility = getTotalGroupsUtility(groups)
             
             print("PREV util", U, "\nNEW util", totalUtility,"\nnumGroups",len(groups),"\n", userGroups)
@@ -1026,17 +1058,39 @@ def crossLayer(competitors):
                 
             U = totalUtility
             round +=1
+            
+            # save median state
+            medianGroups = []
+            for g in groups:
+                medianGroups.append(g)
+           
+            print("groups", len(groups))
+            #input()
            
             if numGroups == 1:# no reason to make another round of resourse allocation when there is one group
                 break;
            
         print("Exiting Iteration 2\n\tmaxU ", maxU,"\n\tU", U, "\n\tgroups ", numGroups)
+        #input("EVALUATE")
         if maxU >= U:
             break
+            
+        finalGs = userGroups
         
-        print("maxU", maxU, "\tU",U)
+        finalGroups = []
+        for g in medianGroups:
+            finalGroups.append(g)
+      
+        
+        print("maxU", maxU, "\tU",U, "groups ",len(finalGs),"\n",finalGs)
         #input("EXIting iteration2")
         maxU = U
+    
+    
+    print("---------", maxU,"\n",finalGs)
+    
+    for g in finalGroups:
+        g.printGroupData()
     
     RESULTS[2] += maxU
     competitors[2].values.append(maxU)
@@ -1048,14 +1102,14 @@ def oneMulticastGroup(competitors):
     problem = cplex.Cplex()
     problem.objective.set_sense(problem.objective.sense.maximize)
     problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
-    #problem.parameters.timelimit.set(1000) # ~16 minutes
+    problem.parameters.timelimit.set(1000) # ~16 minutes
     problem.parameters.mip.tolerances.mipgap.set(optGap)
 
     # v.t.q
     for t in range(T):
         for q in range(Q):
             varName = "v." + str(t+1) + "." + str(q+1)
-            objVal = math.log10(V[q])*tileWeights[t]
+            objVal = math.log2(V[q])*tileWeights[t]
             problem.variables.add(obj=[objVal ],
                                     lb=[0.0],
                                     ub=[1.0],
@@ -1096,7 +1150,27 @@ def oneMulticastGroup(competitors):
     
     problem.solve()
     printProblemSolution(problem)
-    print("1-MG: Obj Value: ", problem.solution.get_objective_value()*I)
+    
+    
+    deliveredTiles = numpy.ones(T).tolist()
+    for t in range(T):
+        deliveredTiles[t]*=-1
+    
+    for t in range(T):
+        for q in range(Q):
+            varName = "v."+str(t+1)+"."+str(q+1)
+            sol = problem.solution.get_values(varName)
+            if sol <0:
+                print("BIG PROBLEM")
+                exit()
+            if sol >0.5:
+                deliveredTiles[t]=q+1
+    
+    print(user_mcs)
+    print("MIN MCS ",minMCS)
+    print("Delivered tiles: ", deliveredTiles)
+    print("average tile", sum(deliveredTiles)/len(deliveredTiles))
+    print("\n\n===================================1-MG: Obj Value: ", problem.solution.get_objective_value()*I,"\tavg tiles ", sum(deliveredTiles)/len(deliveredTiles))
     RESULTS[0] += problem.solution.get_objective_value()*I
     competitors[0].values.append(problem.solution.get_objective_value()*I)
     
@@ -1126,7 +1200,7 @@ def optimalLTEVariables(problem):
             for t in range(T):
                 for q in range(Q):
                     varName = "m." + str(i+1) + "." + str(k+1) + "." + str(t+1) + "." + str(q+1)
-                    problem.variables.add(obj=[ utility[t][q] ],
+                    problem.variables.add(obj=[ utility[t][q] ], # the utility has already the multiplication with the tile weights from the readconfiguration
                                           lb=[0.0],
                                           ub=[1.0],
                                           types=["B"],
@@ -1142,7 +1216,6 @@ def optimalLTEVariables(problem):
 
 def optimalLTEConstraints(problem):
    print("Generating problem constraints")
-
 
    # sum_k(z.k) <= RBs
    theVars=[]
@@ -1182,7 +1255,7 @@ def optimalLTEConstraints(problem):
                                        rhs=[0.0])
    
    
-   # sum_i( m.i.k.t.q ) - y.k.t.q <= 0
+   # sum_i( m.i.k.t.q ) - y.k.t.q*AUXILIARY <= 0
    for k in range(K):
        for t in range(T):
             for q in range(Q):
@@ -1230,8 +1303,7 @@ def optimalLTEConstraints(problem):
                                            senses=["E"],
                                            rhs=[1.0])
    
-   
-   
+      
    #sum_q( m.i.k.t.q*c.k ) <= c.i
    for i in range(I):
        for k in range(K):
@@ -1257,7 +1329,7 @@ def optimalLTE(competitors):
     problem = cplex.Cplex()
     problem.objective.set_sense(problem.objective.sense.maximize)
     problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
-    #problem.parameters.timelimit.set(1000) # ~16 minutes
+    problem.parameters.timelimit.set(1000) # ~16 minutes
     problem.parameters.mip.tolerances.mipgap.set(optGap)
     
     
@@ -1265,10 +1337,45 @@ def optimalLTE(competitors):
     optimalLTEConstraints(problem)
     problem.solve()
     printProblemSolution(problem)
-    print("O-LTE: Obj Value: ", problem.solution.get_objective_value())
+    
+    
+    print("----------------------")
+    
+    
+    gTiles = []
+    
+    for k in range(K):
+        tmp = numpy.ones(T).tolist()
+        gTiles.append(tmp)
+    for k in range(K):
+        for t in range(T):
+            gTiles[k][t]*=-1
+    
+    for k in range(K):
+        tmp = []
+        for t in range(T):
+            for q in range(Q):
+                varName = "y."+str(k+1)+"."+str(t+1)+"."+str(q+1)
+                sol = problem.solution.get_values(varName)
+                if sol > 0.5:
+                    gTiles[k][t]=q+1
+    
+    tileQualities = 0;
+    cnt = 0
+    for k in range(K):
+        if sum(gTiles[k]) != -1*len(gTiles[k]):
+            print("group", k+1,"\n\t",gTiles[k])
+            for t in range(T):
+                if gTiles[k][t] >0.5:
+                    tileQualities+=gTiles[k][t]
+                    cnt+=1
+            
+            
+            
+    print("\n\n===================================O-LTE: Obj Value: ", problem.solution.get_objective_value(), "\t avg tiles ", tileQualities/cnt)
     RESULTS[1] += problem.solution.get_objective_value()
     competitors[1].values.append(problem.solution.get_objective_value())
-
+    
 
 def optimalGWOLVariables(problem):
 
@@ -1500,14 +1607,14 @@ def gwol(competitors):
     problem = cplex.Cplex()
     problem.objective.set_sense(problem.objective.sense.maximize)
     problem.parameters.preprocessing.presolve.set(problem.parameters.preprocessing.presolve.values.off)
-    #problem.parameters.timelimit.set(1000) # ~16 minutes
+    problem.parameters.timelimit.set(1000) # ~16 minutes
     problem.parameters.mip.tolerances.mipgap.set(optGap)
     
     optimalGWOLVariables(problem)
     optimalGWOLConstraints(problem)
     problem.solve()
     printProblemSolution(problem)
-    print("GWOL: Obj Value: ", problem.solution.get_objective_value())
+    print("\n\n===================================GWOL: Obj Value: ", problem.solution.get_objective_value())
     RESULTS[3]+=problem.solution.get_objective_value()
     competitors[3].values.append(problem.solution.get_objective_value())
 
@@ -1528,7 +1635,7 @@ def writeResults(iterations, numCompetitors):
     df = pd.DataFrame(data, columns = ['Name', 'Utility', 'Std'])
     
     print(Bm)
-    fileName="RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0])+"_APs_"+str(AP)+".csv"
+    fileName="RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+".csv"
     
     df.to_csv(fileName)
     print(df)
@@ -1564,6 +1671,9 @@ if __name__ == "__main__":
     readConfiguration()
     
     
+    #crossLayer(competitors)
+   # exit()
+    
     iter =1
     maxIters = 2
     while iter <= maxIters:
@@ -1572,7 +1682,7 @@ if __name__ == "__main__":
         
         oneMulticastGroup(competitors)
         optimalLTE(competitors)
-        crossLayer(competitors)
+        #crossLayer(competitors)
         gwol(competitors)
         optimalPanoramicVideo(competitors)
         iter+=1
