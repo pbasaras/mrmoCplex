@@ -1,18 +1,19 @@
 {
   "Users":{
-    "number": 40,
+    "number": 60,
     "mcs distribution": "uniform"
   },
   
   "WiFiAPs":{ 
     "number": 10,
-    "backhaul": 5000.0,
-    "minRate": 500.0
+    "backhaul": 20000.0,
+    "minRate": 2000.0,
+    "rate distribution": "uniform"
   },
   
   "Multicast Groups": {
     "number": 6,
-    "RBs": 40,
+    "RBs": 100,
     "group mcs": [116, 195, 318, 439, 597, 733]
   },
 

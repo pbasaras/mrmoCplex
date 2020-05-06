@@ -4,6 +4,7 @@ from scipy.optimize import *
 from numpy import *
 import pandas as pd
 import statistics
+import scipy.stats as stats
 
 
 I=0
@@ -13,7 +14,7 @@ K=0;
 AP=0;
 RBs=0
 AUXILIARY = 10000
-coef = 0.6
+coef = 0.8
 
 V=[]
 Bm=[]
@@ -26,8 +27,9 @@ tileWeights = []
 utility=[]
 debug = 0
 
+myDist = "uniform"
 
-optGap = 0.04
+optGap = 0.05
 
 RESULTS = []
 TILEQUAL = []
@@ -200,27 +202,51 @@ def generateUniformMcsDistribition(numUsers, numChannels):
     return uniformDst
  
  
-def generateWifiConnections(I, AP, minWiFiRate, maxWiFiRate):
+def generateWifiConnections(I, AP, minWiFiRate, maxWiFiRate, distribution):
     global h_i_m
     print("minWiFiRate ", minWiFiRate, "\nmaxWiFiRate ", maxWiFiRate)
     userAP = numpy.random.randint(AP, size=I) # AP index for each user
     userRate = numpy.random.uniform(minWiFiRate, maxWiFiRate, size=I)
     
-    for i in range(I):
-        tmp = numpy.zeros(AP)
-        tmp[ userAP[i] ] = round(userRate[i], 2) # get only two decimal digits
-        h_i_m.append(tmp.tolist())
-            
     
+    if distribution=="uniform":
+        print("Uniform Distributiopn")
+        for i in range(I):
+            tmp = numpy.zeros(AP)
+            tmp[ userAP[i] ] = round(userRate[i], 2) # get only two decimal digits
+            h_i_m.append(tmp.tolist())
+    elif distribution=="normal":
+        print("Normal Distributiopn")
+        avgUniformRate = sum(userRate)/len(userRate)
+        stdUniform = statistics.stdev(userRate)
+        userRate = abs(numpy.random.normal(avgUniformRate, stdUniform, I))
+        userRate=userRate.tolist()
+        
+        print(avgUniformRate)
+        print(stdUniform)
+        for i in range(len(userRate)):
+            if userRate[i] < 500:
+                userRate[i] = 500
+                
+        for i in range(I):
+            tmp = numpy.zeros(AP)
+            tmp[ userAP[i] ] = round(userRate[i], 2) # get only two decimal digits
+            h_i_m.append(tmp.tolist())
+        print(h_i_m)
+    else:
+        print("UNKNOWN WIFI DISTRIBUTION")
+        exit()
+        
+ 
     #print(h_i_m)
     #print(userRate)
     #print(userAP)
     #exit()
  
     
-def readConfiguration():
+def readConfiguration(overBm):
 
-    global I, AP, K, user_mcs, group_mcs, Rmax, Bm, h_i_m, V, T, Q, RBs, utility, coef
+    global I, AP, K, user_mcs, group_mcs, Rmax, Bm, h_i_m, V, T, Q, RBs, utility, coef, myDist
 
     user_mcs = []
     group_mcs = []
@@ -269,14 +295,15 @@ def readConfiguration():
 
     Bm = [0.0]*AP
     for m in range(AP):
-        Bm[m] = int( obj["WiFiAPs"]["backhaul"] )    # AP backhaul capacity
+        Bm[m] = overBm#int( obj["WiFiAPs"]["backhaul"] )    # AP backhaul capacity
     
     minWiFiRate = int(obj["WiFiAPs"]["minRate"])
     maxWiFiRate = Bm[0]
     
     #h_i_m = generateWiFiPlane(I, minWiFiRate, maxWiFiRate)
+    myDist = obj["WiFiAPs"]["rate distribution"]
     
-    generateWifiConnections(I, AP, minWiFiRate, maxWiFiRate)
+    generateWifiConnections(I, AP, minWiFiRate, maxWiFiRate, myDist)
     
     #h_i_m= []
     #for i in range(I):
@@ -311,11 +338,15 @@ def readConfiguration():
     
 def generateTileWeights(tiles):
     global tileWeights
-    tileWeights = numpy.random.uniform(0.08, 0.99, size=tiles).tolist()
-    tileWeights = numpy.ones(tiles).tolist()
+    #tileWeights = numpy.random.uniform(0.08, 0.99, size=tiles).tolist()
+    #tileWeights = numpy.ones(tiles).tolist()
+    weights = pd.read_csv('FootballTileProbabilities.csv')
+    #print(weights['Tile Probability'])
+    tileWeights = weights['Tile Probability'].tolist()
+    #print(tileWeights)
+    #print(len(tileWeights))
     print("\nTiles viewing probability: ",tileWeights)
-
-
+    
 
 def generateProblemVariables(problem):
     print("\nGenerating problem variables")
@@ -580,9 +611,12 @@ def optimalPanoramicVideo(competitors):
      
     tileQualities = 0;
     cnt = 0
+    numGroups = []
     for k in range(K):
         if sum(gTiles[k]) != -1*len(gTiles[k]):
             print("group", k+1,"\n\t",gTiles[k])
+            if k not in numGroups:
+                numGroups.append(k)
             for t in range(T):
                 if gTiles[k][t] >0.5:
                     tileQualities+=gTiles[k][t]
@@ -592,6 +626,7 @@ def optimalPanoramicVideo(competitors):
     RESULTS[4]+=problem.solution.get_objective_value()
     competitors[4].values.append(problem.solution.get_objective_value())
     competitors[4].avgTileQuality += tileQualities/cnt
+    competitors[4].activatedGroups += len(numGroups)
     
 ##############################################################################################################
 ##############################################################################################################
@@ -1208,6 +1243,7 @@ def oneMulticastGroup(competitors):
     #TILEQUAL[0] += sum(deliveredTiles)/len(deliveredTiles)
     competitors[0].values.append(problem.solution.get_objective_value()*I)
     competitors[0].avgTileQuality += sum(deliveredTiles)/len(deliveredTiles)
+    competitors[0].activatedGroups +=1
     
 def optimalLTEVariables(problem):
     # y.k.t.q
@@ -1397,9 +1433,12 @@ def optimalLTE(competitors):
     
     tileQualities = 0;
     cnt = 0
+    numGroups =[]
     for k in range(K):
         if sum(gTiles[k]) != -1*len(gTiles[k]):
             print("group", k+1,"\n\t",gTiles[k])
+            if k not in numGroups:
+                numGroups.append(k)
             for t in range(T):
                 if gTiles[k][t] >0.5:
                     tileQualities+=gTiles[k][t]
@@ -1412,6 +1451,7 @@ def optimalLTE(competitors):
     TILEQUAL[1] += tileQualities/cnt
     competitors[1].values.append(problem.solution.get_objective_value())
     competitors[1].avgTileQuality += tileQualities/cnt
+    competitors[1].activatedGroups += len(numGroups)
     
 
 def optimalGWOLVariables(problem):
@@ -1676,9 +1716,12 @@ def gwol(competitors):
      
     tileQualities = 0
     cnt = 0
+    numGroups = []
     for k in range(K):
         if sum(gTiles[k]) != -1*len(gTiles[k]):
             print("group", k+1,"\n\t",gTiles[k])
+            if k not in numGroups:
+                numGroups.append(k)
             for t in range(T):
                 if gTiles[k][t] >0.5:
                     tileQualities+=gTiles[k][t]
@@ -1689,6 +1732,7 @@ def gwol(competitors):
     RESULTS[3]+=problem.solution.get_objective_value()
     competitors[3].values.append(problem.solution.get_objective_value())
     competitors[3].avgTileQuality += tileQualities/cnt
+    competitors[3].activatedGroups += len(numGroups)
 
 def writeResults(iterations, numCompetitors):
     # initialize list of lists
@@ -1700,16 +1744,33 @@ def writeResults(iterations, numCompetitors):
         curStd = -1
         if len(competitors[i].values) >0:
             curStd = statistics.stdev(competitors[i].values)
-        data.append([names[i], RESULTS[i]/iterations, curStd, competitors[i].avgTileQuality/iterations])
+        data.append([names[i], RESULTS[i]/iterations, curStd, competitors[i].avgTileQuality/iterations, competitors[i].activatedGroups/iterations])
     
     # Create the pandas DataFrame
-    df = pd.DataFrame(data, columns = ['Name', 'Utility', 'Std', 'avgTileQuality'])
+    df = pd.DataFrame(data, columns = ['Name', 'Utility', 'Std', 'avgTileQuality','Active Groups'])
     
     print(Bm)
-    fileName="RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+".csv"
+    fileName="Users_"+str(I)+"_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
     
     df.to_csv(fileName)
     print(df)
+    
+    oneFile ="COMP_ONE_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    olteFile ="COMP_OLTE_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    gwolFile ="COMP_GWOL_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    pumaFile ="COMP_PUMA_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    
+    #print(RESULTS[0])
+    
+    oneDf = pd.DataFrame(competitors[0].values, columns = ['one'])
+    olteDf = pd.DataFrame(competitors[1].values, columns = ['olte'])
+    gwolDf = pd.DataFrame(competitors[3].values, columns = ['gwol'])
+    pumaDf = pd.DataFrame(competitors[4].values, columns = ['puma'])
+
+    oneDf.to_csv(oneFile)
+    olteDf.to_csv(olteFile)
+    gwolDf.to_csv(gwolFile)
+    pumaDf.to_csv(pumaFile)
 
 
 class competitor:
@@ -1720,6 +1781,7 @@ class competitor:
         self.groups=0
         self.values=[]
         self.avgTileQuality = 0
+        self.activatedGroups = 0
         
     def printInfo(self):
         print("Name: ", self.name,"\nUtility: ", self.utility, "\nstd: ", self.std,"\ngroups: ",self.groups,"\nValues: ", self.values)
@@ -1730,34 +1792,39 @@ if __name__ == "__main__":
     print("Panoramic Multicast Groups ( -- mrmo360 -- )")
     
     generateTileWeights(32)
-
-    numCompetitors = 5 # 1-MG | O-LTE | CROSS | GWOL | PUMA
-    RESULTS = numpy.zeros(numCompetitors) # 4 compe
-    TILEQUAL = numpy.zeros(numCompetitors)
     
-    names = ['1-MG', 'O-LTE', 'CROSS', 'GWOL', 'PUMA']
-    competitors = []
-    for i in range(numCompetitors):
-        competitors.append( competitor(names[i]) )
-        #competitors[i].printInfo()
+    values = [5000, 10000, 15000, 20000, 25000]
+    for elem in values:
     
-    readConfiguration()
-    
-    
-    #crossLayer(competitors)
-   # exit()
-    
-    iter =1
-    maxIters = 2
-    while iter <= maxIters:
-        print("------------------------------------------------------------------------ITERATION ", iter)
-        readConfiguration()
+        numCompetitors = 5 # 1-MG | O-LTE | CROSS | GWOL | PUMA
+        RESULTS = numpy.zeros(numCompetitors) # 4 compe
+        TILEQUAL = numpy.zeros(numCompetitors)
         
-        oneMulticastGroup(competitors)
-        optimalLTE(competitors)
+        names = ['1-MG', 'O-LTE', 'CROSS', 'GWOL', 'PUMA']
+        competitors = []
+        for i in range(numCompetitors):
+            competitors.append( competitor(names[i]) )
+            #competitors[i].printInfo()
+        
+        readConfiguration(elem)
+        
         #crossLayer(competitors)
-        gwol(competitors)
-        optimalPanoramicVideo(competitors)
-        iter+=1
-    
-    writeResults(maxIters, numCompetitors)
+        #exit()
+        
+        iter = 1
+        maxIters =  70
+        while iter <= maxIters:
+            print("------------------------------------------------------------------------ITERATION ", iter)
+            readConfiguration(elem)
+            
+            #for w in range(AP):
+            #    Bm[w] = elem
+            
+            oneMulticastGroup(competitors)
+            optimalLTE(competitors)
+            #crossLayer(competitors)
+            gwol(competitors)
+            optimalPanoramicVideo(competitors)
+            iter+=1
+        
+        writeResults(maxIters, numCompetitors)
