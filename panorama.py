@@ -244,7 +244,7 @@ def generateWifiConnections(I, AP, minWiFiRate, maxWiFiRate, distribution):
     #exit()
  
     
-def readConfiguration(overBm):
+def readConfiguration(overwrite):
 
     global I, AP, K, user_mcs, group_mcs, Rmax, Bm, h_i_m, V, T, Q, RBs, utility, coef, myDist
 
@@ -263,7 +263,7 @@ def readConfiguration(overBm):
     print (json.dumps(obj, indent=5))
 
     K = int( obj["Multicast Groups"]["number"] ) # number of multicast groups
-    RBs = int( obj["Multicast Groups"]["RBs"] )    # LTE RBs
+    RBs = overwrite#int( obj["Multicast Groups"]["RBs"] )    # LTE RBs
     I = int( obj["Users"]["number"] )            # number of users
 
 
@@ -295,7 +295,7 @@ def readConfiguration(overBm):
 
     Bm = [0.0]*AP
     for m in range(AP):
-        Bm[m] = overBm#int( obj["WiFiAPs"]["backhaul"] )    # AP backhaul capacity
+        Bm[m] = int( obj["WiFiAPs"]["backhaul"] )    # AP backhaul capacity
     
     minWiFiRate = int(obj["WiFiAPs"]["minRate"])
     maxWiFiRate = Bm[0]
@@ -321,6 +321,7 @@ def readConfiguration(overBm):
         utility.append(tmpValues)
         
 
+    print("\nRBs: ", RBs)
     print("\nUsers: ", I)
     print("\nAPs: ", AP)
     print("\nGroups: ", K)
@@ -634,6 +635,15 @@ def optimalPanoramicVideo(competitors):
 
 def getTileUtility(rate):
     return numpy.log2(rate)
+    
+    
+def checkGroupSplit():
+    
+    for i in range(len(userGroups)):
+        if len(userGroups[i]) ==0:
+            print(userGroups)
+            print("INVALID SPLIT OF MCAST GROUPS")
+            exit()
 
 def groupSplitHeuristic():
     global MaxSE, userGroups
@@ -646,6 +656,10 @@ def groupSplitHeuristic():
     uniqueMCSList  = list(currentMCSList)
     uniqueMCSList.sort()    # always extract the unique mcs values in the last group
     print("Unique MCS list : ",uniqueMCSList)
+    
+    if len(userGroups)>1 and len(uniqueMCSList) == 1:
+        return -1
+    
     
     minMCS = min(uniqueMCSList) # get the minMCS which will me the SE for the left group of the split
     outputMCS = minMCS
@@ -691,19 +705,27 @@ def groupSplitHeuristic():
     #print(userGroups)
     userGroups.append(tmpList)
     print(userGroups)
-            
+    
+    
+    checkGroupSplit()
+    
+    return 0
+
 
 def crossLayergrouping():
     print("\nCrossLayer grouping")
     global MaxSE, userGroups
+    
+    groupFlag =0
     
     if MaxSE == 0:
         MaxSE = min(user_mcs)*I
         userGroups.append(sorted(user_mcs))
         print("\t", userGroups)
     else:
-        groupSplitHeuristic()
+       groupFlag = groupSplitHeuristic()
 
+    return groupFlag
 
 lagGroups = 0
 lagCon = []
@@ -755,6 +777,7 @@ def crossLayerResourceAllocation(groups):
     zGuess=numpy.zeros(numVariables)
     z = fsolve(lagrangeFunction, zGuess)
     
+    print("------------LAGRANGE SOLUTION", z)
     pos = 1 + lagGroups
     for g in groups:
         g.RBs = math.floor(z[pos])
@@ -838,7 +861,7 @@ class Group:
         #print(x_data)
         #print(y_data)
         #print(self.pairs)
-        popt, pcov = curve_fit(curveFitFunction, x_data, y_data)
+        popt, pcov = curve_fit(curveFitFunction, x_data, y_data,maxfev=7000)
         
         
         self.Ag = popt[0]
@@ -942,7 +965,7 @@ def initializeRateForLowestRepresentation(groups):
     
     if consumedRB > groups[0].RBs:
         print("INFEASIBLE RESOURCE ALLOCATION\n\tconsumbedRB ", consumedRB,"\n\tAvailableRB ", g.RBs)
-        exit()
+        consumedRB = -20
         
     return consumedRB
     
@@ -1007,12 +1030,13 @@ def crossLayerRateSelection(groups):
         g.Ag = 0
         g.Bg = 0
         
-        print("\n\nTile allocation for group, ", g.id, "\tRB ", g.RBs,"\tresidualRB ", g.residualRB,"\npairs:")
-        print(g.pairs)
-        #input("press enter")
+        print("\n\nTile allocation for group, ", g.id, "\tRB ", g.RBs,"\tresidualRB ", g.residualRB,"\npairs:\n", g.pairs)
+        #input("WAITING: crossLayerRateSelection()")
         
         if gIdx == 0: # if this is the first group we need to substract the rate already given by the initialization
             consumedRBs = initializeRateForLowestRepresentation(groups)  # charge cost of lowest quality to lowest group, and allocate the lowest tiles to all groups.
+            if consumedRBs == -20: # no more RB to give to all tiles the lowest video
+                return -20
             curRate = consumedRBs*groups[0].mcs
             generateTileRepresentationCostMatrixForLowestGroup(groups)
             #curUtil = g.Utility
@@ -1047,7 +1071,7 @@ def crossLayerRateSelection(groups):
                 exit()
         
         g.curvefiting()
-        
+        #input()
 
 
 def getTotalGroupsUtility(groups):
@@ -1061,6 +1085,7 @@ def getTotalGroupsUtility(groups):
         print("prev Util ", prevUtil, "g.Util ", g.Utility, "total", totalUtility, "users ", len(g.users))
         prevUtil = totalUtility
     '''
+    
     
     totalUtility =0;
     for g in groups:
@@ -1088,13 +1113,18 @@ def crossLayer(competitors):
 
     medianGroups = []
     finalGroups = []
+    
+    optimalNumGroups = 0
 
     maxU = 0
+    
     while True: # exit cross layer algorithm when new utility of the new grouping algorithm is not larger than the previous one
         
         print("--------- Iteration 1 ---------")
         # -- A
-        crossLayergrouping()
+        groupFlag = crossLayergrouping()
+        if groupFlag == -1:
+            break;
         #input("press enter")
         
         # -- B
@@ -1114,12 +1144,17 @@ def crossLayer(competitors):
                 crossLayerResourceAllocation(groups)
                 
             # -- C
-            crossLayerRateSelection(groups)
+            val = crossLayerRateSelection(groups)
+            if val == -20:
+                print("New partitioning resulted in infeasible problem: not enough RBs to deliver the lowest video quality tiles to the first group")
+                print("Solution????", U, "\n", userGroups)
+                #input()
+                break;
         
             totalUtility = getTotalGroupsUtility(groups)
             
-            print("PREV util", U, "\nNEW util", totalUtility,"\nnumGroups",len(groups),"\n", userGroups)
-            #input("EVALUATE")
+            print("\n\nRound: ",round,"PREV util", U, "\nNEW util", totalUtility,"\nnumGroups", len(groups),"\n", userGroups)
+            #input("Returned from crossLayerRateSelection()")
             
             if totalUtility <= U:
                 break;
@@ -1138,30 +1173,34 @@ def crossLayer(competitors):
             if numGroups == 1:# no reason to make another round of resourse allocation when there is one group
                 break;
            
-        print("Exiting Iteration 2\n\tmaxU ", maxU,"\n\tU", U, "\n\tgroups ", numGroups)
+        print("\n\n%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Exiting Iteration 2\n\tmaxU ", maxU,"\n\tU", U, "\n\tcur_groups ", numGroups)
         #input("EVALUATE")
         if maxU >= U:
             break
             
+        print("****************************************************UPDATING NEW BEST VALUE")
         finalGs = userGroups
+        
+        optimalNumGroups = len(userGroups)
         
         finalGroups = []
         for g in medianGroups:
             finalGroups.append(g)
       
         
-        print("maxU", maxU, "\tU",U, "groups ",len(finalGs),"\n",finalGs)
-        #input("EXIting iteration2")
         maxU = U
+        print("=================================================================== maxU", maxU, "\tU",U, "groups ",len(finalGs),"\n",finalGs)
+        #input("EXIting iteration2")
+
     
-    
-    print("---------", maxU,"\n",finalGs)
-    
+    print("---------", maxU,"\n",finalGs,"\tseriously ", optimalNumGroups,"\tbut", len(finalGs))
+    #input("out")
     for g in finalGroups:
         g.printGroupData()
     
     RESULTS[2] += maxU
     competitors[2].values.append(maxU)
+    competitors[2].activatedGroups += optimalNumGroups
 
 def oneMulticastGroup(competitors):
 
@@ -1750,15 +1789,15 @@ def writeResults(iterations, numCompetitors):
     df = pd.DataFrame(data, columns = ['Name', 'Utility', 'Std', 'avgTileQuality','Active Groups'])
     
     print(Bm)
-    fileName="Users_"+str(I)+"_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    fileName="CROSS_Users_"+str(I)+"_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
     
     df.to_csv(fileName)
     print(df)
     
-    oneFile ="COMP_ONE_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
-    olteFile ="COMP_OLTE_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
-    gwolFile ="COMP_GWOL_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
-    pumaFile ="COMP_PUMA_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    oneFile ="CROSS_COMP_ONE_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    olteFile ="CROSS_COMP_OLTE_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    gwolFile ="CROSS_COMP_GWOL_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
+    pumaFile ="CROSS_COMP_PUMA_RBs_"+str(RBs)+"_iters_"+str(iterations)+"_WiFi_"+str(Bm[0]/1000)+"_APs_"+str(AP)+"_coef_"+str(coef)+"_"+myDist+"_min_2mbps.csv"
     
     #print(RESULTS[0])
     
@@ -1793,7 +1832,8 @@ if __name__ == "__main__":
     
     generateTileWeights(32)
     
-    values = [5000, 10000, 15000, 20000, 25000]
+    values = [5000, 15000, 20000, 25000, 30000]
+    values = [20,40,60,80,100]
     for elem in values:
     
         numCompetitors = 5 # 1-MG | O-LTE | CROSS | GWOL | PUMA
@@ -1808,23 +1848,17 @@ if __name__ == "__main__":
         
         readConfiguration(elem)
         
-        #crossLayer(competitors)
-        #exit()
-        
         iter = 1
-        maxIters =  70
+        maxIters =  100
         while iter <= maxIters:
             print("------------------------------------------------------------------------ITERATION ", iter)
             readConfiguration(elem)
             
-            #for w in range(AP):
-            #    Bm[w] = elem
-            
-            oneMulticastGroup(competitors)
-            optimalLTE(competitors)
-            #crossLayer(competitors)
-            gwol(competitors)
-            optimalPanoramicVideo(competitors)
+            #oneMulticastGroup(competitors)
+            #optimalLTE(competitors)
+            crossLayer(competitors)
+            #gwol(competitors)
+            #optimalPanoramicVideo(competitors)
             iter+=1
         
         writeResults(maxIters, numCompetitors)
