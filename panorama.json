@@ -6,14 +6,14 @@
   
   "WiFiAPs":{ 
     "number": 10,
-    "backhaul": 20000.0,
+    "backhaul": 10000.0,
     "minRate": 2000.0,
     "rate distribution": "uniform"
   },
   
   "Multicast Groups": {
     "number": 6,
-    "RBs": 100,
+    "RBs": 60,
     "group mcs": [116, 195, 318, 439, 597, 733]
   },
 

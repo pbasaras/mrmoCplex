@@ -1833,7 +1833,6 @@ if __name__ == "__main__":
     generateTileWeights(32)
     
     values = [5000, 15000, 20000, 25000, 30000]
-    values = [20,40,60,80,100]
     for elem in values:
     
         numCompetitors = 5 # 1-MG | O-LTE | CROSS | GWOL | PUMA
@@ -1854,11 +1853,11 @@ if __name__ == "__main__":
             print("------------------------------------------------------------------------ITERATION ", iter)
             readConfiguration(elem)
             
-            #oneMulticastGroup(competitors)
-            #optimalLTE(competitors)
+            oneMulticastGroup(competitors)
+            optimalLTE(competitors)
             crossLayer(competitors)
-            #gwol(competitors)
-            #optimalPanoramicVideo(competitors)
+            gwol(competitors)
+            optimalPanoramicVideo(competitors)
             iter+=1
         
         writeResults(maxIters, numCompetitors)
